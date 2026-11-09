@@ -26,15 +26,20 @@ jobs:
           Write-Host "OK: build.spec i assets/scs-telemetry.dll znalezione."
       - name: Build exe
         run: pyinstaller build.spec
-      - name: Compute SHA-256
+      - name: Compute SHA-256 (dowolna wersja)
         shell: pwsh
         run: |
-          $hash = (Get-FileHash -Algorithm SHA256 -Path "dist\ETS2-Szosownia-Telemetria-v0.2.0.exe").Hash
-          $hash | Out-File -Encoding ascii "dist\ETS2-Szosownia-Telemetria-v0.2.0.exe.sha256"
-          Write-Host "SHA-256: $hash"
+          $exe = Get-ChildItem -Path dist -Filter 'ETS2-Szosownia-Telemetria-*.exe' | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "Brak pliku ETS2-Szosownia-Telemetria-*.exe w katalogu dist"
+            exit 1
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exe.FullName).Hash.ToLower()
+          "$hash  $($exe.Name)" | Out-File -Encoding ascii "$($exe.FullName).sha256"
+          Write-Host "SHA-256 $($exe.Name): $hash"
       - uses: actions/upload-artifact@v4
         with:
-          name: ETS2-Szosownia-Telemetria-v0.2.0
+          name: ETS2-Szosownia-Telemetria
           path: |
-            dist/ETS2-Szosownia-Telemetria-v0.2.0.exe
-            dist/ETS2-Szosownia-Telemetria-v0.2.0.exe.sha256
+            dist/ETS2-Szosownia-Telemetria-*.exe
+            dist/ETS2-Szosownia-Telemetria-*.exe.sha256
