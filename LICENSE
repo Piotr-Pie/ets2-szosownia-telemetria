@@ -1,0 +1,38 @@
+Ten pakiet zawiera dwa oddzielne elementy objęte licencją MIT:
+
+1) scs-telemetry.dll (plugin SCS SDK)
+   Pochodzi z projektu: https://github.com/truckermudgeon/scs-sdk-plugin
+   (fork repozytorium RenCloud/scs-sdk-plugin), commit
+   c8910d6e9a5ca0c2fa018942054263292cab19a4, release v1.12.1 (2025-12-19).
+   Oryginalna nota licencyjna (zachowana w całości, zgodnie z MIT):
+
+   -----------------------------------------------------------------
+   The MIT License (MIT)
+
+   Copyright (c) 2014 Hans
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy of
+   this software and associated documentation files (the "Software"), to deal in
+   the Software without restriction, including without limitation the rights to
+   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+   the Software, and to permit persons to whom the Software is furnished to do so,
+   subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+   FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+   COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+   -----------------------------------------------------------------
+
+2) client.py, install.bat, run.bat, config.example.json, README.md
+   (kod klienta telemetrii ETS2 Szosownia, napisany dla tego projektu)
+
+   Copyright (c) 2026 ETS2 Szosownia
+
+   Na tych samych warunkach MIT License (tekst jak powyżej), z tą różnicą,
+   że właścicielem praw do tej części jest projekt ETS2 Szosownia.
