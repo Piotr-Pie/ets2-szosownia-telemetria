@@ -38,6 +38,16 @@ docstring client/client.py (v0.1.4), sekcja "POZYCJA CIĘŻARÓWKI" - skrot:
 truck_dp (ZONA 8, offset 2200), coordinateX/Y/Z = pozycja, rotationX =
 heading (ulamek obrotu, *360.0 % 360.0 -> stopnie [0,360)). Przeniesione
 bez zmian merytorycznych z client/client.py v0.1.4.
+
+ZLECENIE (truck.job, truck.onJob) - dodane 2026-11-09, v0.2.4, kontrakt v3
+(docs/telemetry-contract-v3.md). Offsety wyliczone recznie z sum rozmiarow
+pol w naglowku (commit powyzej), zweryfikowane skryptem w tej sesji -
+patrz self-check przy ScsTelemetryMap i raport client-exe-v0.2.4.md.
+UWAGA WAZNA: pole truck_f.routeDistance jest w METRACH (komentarz SDK w
+scssdk_telemetry_truck_common_channels.h: "truck's navigation distance
+(in meters)"), NIE w km jak pierwotnie zalozono w kontrakcie - klient
+dzieli przez 1000 przy budowie job.remaining_distance_km. routeTime jest
+w SEKUNDACH ("in second") - klient dzieli przez 60 na minuty.
 """
 
 from __future__ import annotations
@@ -60,7 +70,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 CLIENT_NAME = "ets2-telemetry-client"
-CLIENT_VERSION = "0.2.3"
+CLIENT_VERSION = "0.2.4"
 
 # commit uzyty do wyliczenia poniższych offsetow (dla audytu / aktualizacji)
 HEADER_COMMIT = "c8910d6e9a5ca0c2fa018942054263292cab19a4"
@@ -362,7 +372,23 @@ class ScsTelemetryMap(C.Structure):
         ("_skip_zones_6_to_7", C.c_char * (2200 - 1640)),
         # STREFA 8 [2200-2299] - pozycja/orientacja ciezarowki, v0.2.1
         ("truck_dp", _TruckDp),
-        ("_skip_rest_zone8_and_zones_9_10", C.c_char * (4208 - 2248)),
+        # STREFA 9 [2300-3999] - czesci stringowe zlecenia (job), dodane w
+        # v0.2.4 (kontrakt v3). Offsety wyliczone recznie z sum rozmiarow
+        # pol config_s w naglowku (stringsize=64, L34), zweryfikowane
+        # skryptem w sesji - patrz raport v0.2.4. cargoId (L511) jest
+        # CELOWO w skipie - zlecenie: tylko do diagnostyki, NIE wysylamy.
+        ("_skip_zone8_tail_and_cargoId", C.c_char * 372),  # buffer_dp[52] + truckBrandId/truckBrand/truckId/truckName/cargoId (5*64)
+        ("cargo", C.c_char * 64),            # offset 2620 (config_s.cargo, L512)
+        ("_skip_cityDstId", C.c_char * 64),  # cityDstId[64] (L513)
+        ("cityDst", C.c_char * 64),          # offset 2748 (config_s.cityDst, L514)
+        ("_skip_compDst_and_citySrcId", C.c_char * 192),  # compDstId+compDst+citySrcId (L515-517)
+        ("citySrc", C.c_char * 64),          # offset 3004 (config_s.citySrc, L518)
+        ("_skip_compSrc_shifter_plates", C.c_char * 336),  # compSrcId+compSrc+shifterType[16]+truckLicensePlate*3 (L519-525)
+        ("jobMarket", C.c_char * 32),        # offset 3404 (config_s.jobMarket, L527)
+        ("_skip_zone9_tail_and_zone10_head", C.c_char * 564),  # gameplay_s + buffer_s[20] (koniec zony 9, L531-542)
+        # STREFA 10 [4000-4199]
+        ("jobIncome", C.c_ulonglong),        # offset 4000 (config_ull.jobIncome, L550)
+        ("_skip_zone10_tail_and_jobCancelledPenalty", C.c_char * 200),  # buffer_ull[192] + jobCancelledPenalty ll (L560)
         # STREFA 11 [4200-4299] - tylko pole revenue nas interesuje w v1;
         # offset 4208 = 4200 (start zony) + 8 (jobCancelledPenalty, ll)
         ("jobDeliveredRevenue_raw", C.c_longlong),  # gameplay_ll.jobDeliveredRevenue, s64
@@ -385,6 +411,26 @@ assert ScsTelemetryMap.truck_dp.offset == 2200, (
 assert ScsTelemetryMap.truck_dp.offset + _TruckDp.rotationX.offset == 2224, (
     "truck_dp.rotationX (heading) ma zly offset - oczekiwano 2224 "
     "(2200 + 3*8, po coordinateX/Y/Z)"
+)
+# Self-check pol zlecenia (job, v0.2.4/kontrakt v3) - offsety wyliczone
+# recznie z sum rozmiarow pol w naglowku, patrz komentarze przy polach
+# wyzej i raport v0.2.4.
+assert ScsTelemetryMap.cargo.offset == 2620, (
+    "cargo ma zly offset - oczekiwano 2620 (config_s.cargo, "
+    "scs-telemetry-common.hpp L512)"
+)
+assert ScsTelemetryMap.cityDst.offset == 2748, (
+    "cityDst ma zly offset - oczekiwano 2748 (config_s.cityDst, L514)"
+)
+assert ScsTelemetryMap.citySrc.offset == 3004, (
+    "citySrc ma zly offset - oczekiwano 3004 (config_s.citySrc, L518)"
+)
+assert ScsTelemetryMap.jobMarket.offset == 3404, (
+    "jobMarket ma zly offset - oczekiwano 3404 (config_s.jobMarket, L527)"
+)
+assert ScsTelemetryMap.jobIncome.offset == 4000, (
+    "jobIncome ma zly offset - oczekiwano 4000 (config_ull.jobIncome, L550, "
+    "10. ZONA)"
 )
 
 
@@ -421,6 +467,21 @@ def parse_telemetry(raw: bytes) -> dict:
         "pos_y": float(m.truck_dp.coordinateY),
         "pos_z": float(m.truck_dp.coordinateZ),
         "heading_fraction": float(m.truck_dp.rotationX),
+        # --- zlecenie (job), v0.2.4, kontrakt v3 ---
+        "on_job": bool(m.special_b.onJob),
+        "cargo_raw": bytes(m.cargo),
+        "cargo_mass_kg_raw": float(m.config_f.cargoMass),
+        "cargo_damage_fraction_raw": float(m.job_f.cargoDamage),
+        "source_city_raw": bytes(m.citySrc),
+        "destination_city_raw": bytes(m.cityDst),
+        "market_raw": bytes(m.jobMarket),
+        "job_income_raw": int(m.jobIncome),
+        "planned_distance_km_raw": int(m.config_ui.plannedDistanceKm),
+        # UWAGA: routeDistance jest w METRACH (SDK: "in meters"), NIE w km
+        # jak zalozono wstepnie w kontrakcie v3 - patrz raport v0.2.4.
+        "route_distance_m_raw": float(m.truck_f.routeDistance),
+        # routeTime jest w SEKUNDACH (SDK: "in second").
+        "route_time_s_raw": float(m.truck_f.routeTime),
     }
 
 
@@ -445,6 +506,97 @@ def build_position(parsed: dict) -> dict | None:
         "z": z,
         "heading_deg": round(heading_deg, 1),
     }
+
+
+# ---------------------------------------------------------------------------
+# 2c) Zlecenie (job, kontrakt v3, v0.2.4) - sanitizacja pol: NaN/inf/poza
+#     zakresem/ujemne gdzie nie wolno -> POLE pominiete (nie caly pakiet).
+#     Stringi: odczyt do pierwszego \0, odrzucenie znakow sterujacych,
+#     obciecie do limitu, pusty -> pole pominiete.
+# ---------------------------------------------------------------------------
+
+MAX_CARGO_LEN = 64
+MAX_CITY_LEN = 64
+MAX_MARKET_LEN = 32
+
+
+def _clean_c_string(raw: bytes, max_len: int) -> str:
+    """bytes z pamieci SCS (char[n], null-terminated) -> str oczyszczony:
+    obciecie do pierwszego \0, dekodowanie UTF-8 (bledne bajty zastepowane),
+    odrzucenie znakow sterujacych (ord < 0x20, w tym \r\n\t), obciecie do
+    max_len znakow. Nigdy nie rzuca wyjatku - w najgorszym razie zwraca ""."""
+    try:
+        head = raw.split(b"\x00", 1)[0]
+        text = head.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - parser nigdy nie ma wywalic calej petli
+        return ""
+    text = "".join(ch for ch in text if ord(ch) >= 0x20)
+    return text[:max_len]
+
+
+def _sanitize_nonneg_float(value: float) -> float | None:
+    """NaN/inf/ujemna -> None (pole pominiete), inaczej wartosc bez zmian."""
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value
+
+
+def build_job(parsed: dict) -> dict:
+    """Buduje obiekt `job` z kontraktu v3 z pol *_raw w parsed (patrz
+    parse_telemetry). KAZDE pole sanitizowane NIEZALEZNIE - pole niepoprawne
+    jest pominiete, ale resztra pola zlecenia (i caly pakiet) nadal sa
+    wysylane. Wolac TYLKO gdy connected=True i parsed["on_job"]=True."""
+    job: dict = {}
+
+    cargo = _clean_c_string(parsed["cargo_raw"], MAX_CARGO_LEN)
+    if cargo:
+        job["cargo"] = cargo
+
+    cargo_mass_kg = _sanitize_nonneg_float(parsed["cargo_mass_kg_raw"])
+    if cargo_mass_kg is not None:
+        job["cargo_mass_kg"] = round(cargo_mass_kg, 1)
+
+    # cargoDamage w pamieci SCS jest ulamkiem 0.0-1.0 (SDK:
+    # "total damage of the cargo in range 0.0 to 1.0") -> *100 na procent.
+    cargo_damage_pct = parsed["cargo_damage_fraction_raw"] * 100.0
+    if math.isfinite(cargo_damage_pct) and 0.0 <= cargo_damage_pct <= 100.0:
+        job["cargo_damage_pct"] = round(cargo_damage_pct, 1)
+
+    source_city = _clean_c_string(parsed["source_city_raw"], MAX_CITY_LEN)
+    if source_city:
+        job["source_city"] = source_city
+
+    destination_city = _clean_c_string(parsed["destination_city_raw"], MAX_CITY_LEN)
+    if destination_city:
+        job["destination_city"] = destination_city
+
+    market = _clean_c_string(parsed["market_raw"], MAX_MARKET_LEN)
+    if market:
+        job["market"] = market
+
+    income = parsed["job_income_raw"]  # u64 w SCS - nigdy ujemny
+    if income >= 0:
+        job["income"] = income
+
+    planned_distance_km = parsed["planned_distance_km_raw"]  # u32 - nigdy ujemny
+    if planned_distance_km >= 0:
+        job["planned_distance_km"] = planned_distance_km
+
+    # routeDistance w pamieci SCS jest w METRACH (SDK:
+    # "truck's navigation distance (in meters)") -> /1000 na km.
+    remaining_distance_km = _sanitize_nonneg_float(
+        parsed["route_distance_m_raw"] / 1000.0
+    )
+    if remaining_distance_km is not None:
+        job["remaining_distance_km"] = round(remaining_distance_km, 1)
+
+    # routeTime w pamieci SCS jest w SEKUNDACH (SDK:
+    # "truck's navigation eta (in second)") -> /60 na minuty.
+    remaining_time_min = _sanitize_nonneg_float(parsed["route_time_s_raw"] / 60.0)
+    if remaining_time_min is not None:
+        job["remaining_time_min"] = round(remaining_time_min, 1)
+
+    return job
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +794,7 @@ class EventTracker:
 def build_packet(connected: bool, running: bool, parsed: dict | None,
                   events: list[dict]) -> dict:
     packet = {
-        "v": 2,
+        "v": 3,
         "client": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
         "sent_at": iso_now(),
         "game": {
@@ -663,6 +815,13 @@ def build_packet(connected: bool, running: bool, parsed: dict | None,
         position = build_position(parsed)
         if position is not None:
             packet["truck"]["position"] = position
+        # Zlecenie (job, kontrakt v3): onJob=True -> obiekt; onJob=False ->
+        # "job": null (zlecenie zakonczone/brak). connected=False -> brak
+        # pola job w ogole (obsluzone przez to, ze tej galezi nie wchodzimy).
+        if parsed["on_job"]:
+            packet["job"] = build_job(parsed)
+        else:
+            packet["job"] = None
     if events:
         packet["events"] = events[:MAX_EVENTS_PER_PACKET]
     return packet

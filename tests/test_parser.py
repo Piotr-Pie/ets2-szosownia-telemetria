@@ -212,7 +212,7 @@ def test_build_packet_v2_includes_position_when_connected():
     raw = build_fake_memory()
     p = parse_telemetry(raw)
     packet = build_packet(connected=True, running=True, parsed=p, events=[])
-    check("packet v == 2", packet["v"], 2)
+    check("packet v == 3 (kontrakt v3, v0.2.4)", packet["v"], 3)
     has_pos = "position" in packet.get("truck", {})
     print(f"[{'OK ' if has_pos else 'FAIL'}] packet zawiera truck.position gdy connected: {has_pos}")
     global FAIL
@@ -234,11 +234,14 @@ def test_build_packet_omits_position_when_nan():
 
 def test_build_packet_v2_without_position_when_not_connected():
     packet = build_packet(connected=False, running=True, parsed=None, events=[])
-    check("packet v == 2 nawet bez polaczenia", packet["v"], 2)
+    check("packet v == 3 nawet bez polaczenia", packet["v"], 3)
     no_truck = "truck" not in packet
     print(f"[{'OK ' if no_truck else 'FAIL'}] brak pola truck gdy connected=False: {no_truck}")
     global FAIL
     FAIL += 0 if no_truck else 1
+    no_job = "job" not in packet
+    print(f"[{'OK ' if no_job else 'FAIL'}] brak pola job gdy connected=False: {no_job}")
+    FAIL += 0 if no_job else 1
 
 
 if __name__ == "__main__":
