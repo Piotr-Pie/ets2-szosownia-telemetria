@@ -1,0 +1,40 @@
+name: build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+      - name: Sprawdz wymagane pliki przed buildem
+        shell: pwsh
+        run: |
+          $missing = @()
+          if (-not (Test-Path "build.spec")) { $missing += "build.spec" }
+          if (-not (Test-Path "assets/scs-telemetry.dll")) { $missing += "assets/scs-telemetry.dll" }
+          if ($missing.Count -gt 0) {
+            Write-Error "Brakuje wymaganych plikow w korzeniu repo: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "OK: build.spec i assets/scs-telemetry.dll znalezione."
+      - name: Build exe
+        run: pyinstaller build.spec
+      - name: Compute SHA-256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 -Path "dist\ETS2-Szosownia-Telemetria-v0.2.0.exe").Hash
+          $hash | Out-File -Encoding ascii "dist\ETS2-Szosownia-Telemetria-v0.2.0.exe.sha256"
+          Write-Host "SHA-256: $hash"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ETS2-Szosownia-Telemetria-v0.2.0
+          path: |
+            dist/ETS2-Szosownia-Telemetria-v0.2.0.exe
+            dist/ETS2-Szosownia-Telemetria-v0.2.0.exe.sha256
