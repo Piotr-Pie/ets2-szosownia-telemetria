@@ -30,6 +30,14 @@ ZAROBEK (revenue), PRZYPINANIE CERTYFIKATU (tls_sha256_pin), LINIA STATUSU
 i POPRAWKA KRYTYCZNA kernel32 (argtypes/restype) - patrz pelna historia i
 uzasadnienie w client/client.py (v0.1.1-v0.1.3, nie duplikowane tutaj, bo
 plik ten jest zamrozona kopia tej samej logiki).
+
+POZYCJA CIĘŻARÓWKI (truck.position) - dodane 2026-11-09, v0.2.1, kontrakt v2
+(docs/telemetry-contract-v2.md). Pelne uzasadnienie (numery linii w
+scs-telemetry-common.hpp i scs_telemetry.cpp, commit powyzej) - patrz
+docstring client/client.py (v0.1.4), sekcja "POZYCJA CIĘŻARÓWKI" - skrot:
+truck_dp (ZONA 8, offset 2200), coordinateX/Y/Z = pozycja, rotationX =
+heading (ulamek obrotu, *360.0 % 360.0 -> stopnie [0,360)). Przeniesione
+bez zmian merytorycznych z client/client.py v0.1.4.
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ import hashlib
 import hmac
 import http.client
 import json
+import math
 import os
 import socket
 import ssl
@@ -51,7 +60,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 CLIENT_NAME = "ets2-telemetry-client"
-CLIENT_VERSION = "0.2.0"
+CLIENT_VERSION = "0.2.1"
 
 # commit uzyty do wyliczenia poniższych offsetow (dla audytu / aktualizacji)
 HEADER_COMMIT = "c8910d6e9a5ca0c2fa018942054263292cab19a4"
@@ -295,10 +304,24 @@ class _SpecialB(C.Structure):
     ]
 
 
+class _TruckDp(C.Structure):
+    """ZONA 8 [2200-2299] - pozycja/orientacja ciezarowki (v0.2.1, BEZ ZMIAN
+    wzgledem client/client.py v0.1.4, patrz tam po pelne uzasadnienie)."""
+    _fields_ = [
+        ("coordinateX", C.c_double),  # offset 2200
+        ("coordinateY", C.c_double),  # offset 2208 (wysokosc)
+        ("coordinateZ", C.c_double),  # offset 2216
+        ("rotationX", C.c_double),    # offset 2224 = heading (ulamek obrotu)
+        ("rotationY", C.c_double),    # offset 2232 = pitch
+        ("rotationZ", C.c_double),    # offset 2240 = roll
+    ]
+
+
 class ScsTelemetryMap(C.Structure):
     # Uklad pamieci jest juz recznie wypadowany w naglowku (placeHolder /
     # buffer_* char[]), wiec pack=1 + te pola odtwarzaja DOKLADNIE
-    # dokumentowane granice stref (zweryfikowano: 39, 499, 699, 1499, 1639).
+    # dokumentowane granice stref (zweryfikowano: 39, 499, 699, 1499, 1639,
+    # 2299 - patrz asercje ponizej).
     _pack_ = 1
     _layout_ = "ms"
     _fields_ = [
@@ -335,8 +358,11 @@ class ScsTelemetryMap(C.Structure):
         ("truck_b", _TruckB),
         ("gameplay_b", _GameplayB),
         ("buffer_b2", C.c_char * 25),
-        # (strefy 6-10 pominiete - nieuzywane w v1, odtworzone jako wypelniacz)
-        ("_skip_zones_6_to_10_and_ll_head", C.c_char * (4208 - 1640)),
+        # (strefy 6-7 pominiete - nieuzywane, wypelniacz do startu zony 8)
+        ("_skip_zones_6_to_7", C.c_char * (2200 - 1640)),
+        # STREFA 8 [2200-2299] - pozycja/orientacja ciezarowki, v0.2.1
+        ("truck_dp", _TruckDp),
+        ("_skip_rest_zone8_and_zones_9_10", C.c_char * (4208 - 2248)),
         # STREFA 11 [4200-4299] - tylko pole revenue nas interesuje w v1;
         # offset 4208 = 4200 (start zony) + 8 (jobCancelledPenalty, ll)
         ("jobDeliveredRevenue_raw", C.c_longlong),  # gameplay_ll.jobDeliveredRevenue, s64
@@ -346,11 +372,19 @@ class ScsTelemetryMap(C.Structure):
     ]
 
 
-# Self-check wykonywany przy imporcie modulu: offset pola revenue musi
-# zgadzac sie z wyliczeniem z naglowka (4208).
+# Self-check wykonywany przy imporcie modulu: offsety musza sie zgadzac z
+# wyliczeniem z naglowka.
 assert ScsTelemetryMap.jobDeliveredRevenue_raw.offset == 4208, (
     "jobDeliveredRevenue_raw ma zly offset w ScsTelemetryMap - sprawdz "
     "layout wzgledem scs-telemetry-common.hpp (11. ZONA, offset 4208)"
+)
+assert ScsTelemetryMap.truck_dp.offset == 2200, (
+    "truck_dp ma zly offset w ScsTelemetryMap - sprawdz layout wzgledem "
+    "scs-telemetry-common.hpp (8. ZONA, offset 2200, L486-499)"
+)
+assert ScsTelemetryMap.truck_dp.offset + _TruckDp.rotationX.offset == 2224, (
+    "truck_dp.rotationX (heading) ma zly offset - oczekiwano 2224 "
+    "(2200 + 3*8, po coordinateX/Y/Z)"
 )
 
 
@@ -383,6 +417,33 @@ def parse_telemetry(raw: bytes) -> dict:
         "job_delivered_earned_xp": int(m.gameplay_i.jobDeliveredEarnedXp),
         "job_delivered_delivery_time": int(m.gameplay_ui.jobDeliveredDeliveryTime),
         "job_delivered_revenue": int(m.jobDeliveredRevenue_raw),
+        "pos_x": float(m.truck_dp.coordinateX),
+        "pos_y": float(m.truck_dp.coordinateY),
+        "pos_z": float(m.truck_dp.coordinateZ),
+        "heading_fraction": float(m.truck_dp.rotationX),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 2b) Pozycja ciężarówki (truck.position, kontrakt v2) - BEZ ZMIAN wzgledem
+#     client/client.py v0.1.4.
+# ---------------------------------------------------------------------------
+
+def build_position(parsed: dict) -> dict | None:
+    """Zwraca {"x","y","z","heading_deg"} albo None, gdy odczyt pozycji z
+    pamieci SCS jest niewiarygodny (NaN/+-inf w x, y, z lub heading)."""
+    x = parsed["pos_x"]
+    y = parsed["pos_y"]
+    z = parsed["pos_z"]
+    heading_fraction = parsed["heading_fraction"]
+    if not all(math.isfinite(v) for v in (x, y, z, heading_fraction)):
+        return None
+    heading_deg = (heading_fraction * 360.0) % 360.0
+    return {
+        "x": x,
+        "y": y,
+        "z": z,
+        "heading_deg": round(heading_deg, 1),
     }
 
 
@@ -581,7 +642,7 @@ class EventTracker:
 def build_packet(connected: bool, running: bool, parsed: dict | None,
                   events: list[dict]) -> dict:
     packet = {
-        "v": 1,
+        "v": 2,
         "client": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
         "sent_at": iso_now(),
         "game": {
@@ -599,6 +660,9 @@ def build_packet(connected: bool, running: bool, parsed: dict | None,
             "fuel_capacity_l": round(parsed["fuel_capacity_l"], 1),
             "odometer_km": round(parsed["odometer_km"], 1),
         }
+        position = build_position(parsed)
+        if position is not None:
+            packet["truck"]["position"] = position
     if events:
         packet["events"] = events[:MAX_EVENTS_PER_PACKET]
     return packet

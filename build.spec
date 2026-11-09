@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-# ETS2 Szosownia - PyInstaller spec, v0.2.0
+# ETS2 Szosownia - PyInstaller spec, v0.2.1
 # ==========================================
 # Budowany na runs-on: windows-latest (patrz .github/workflows/build.yml,
-# NIE wypchnięty do repo z powodu zakresu tokena - patrz raport).
+# PUSH automatyczny z konta Piotr-Pie - patrz raport o zakresie tokena).
 #
 # --onefile --windowed (bez konsoli), DLL pluginu wbudowany jako dane
 # (--add-data), nazwa wynikowa:
-#   ETS2-Szosownia-Telemetria-v0.2.0.exe
+#   ETS2-Szosownia-Telemetria-v0.2.1.exe
 #
 # Budowa lokalna (Windows, do testow deweloperskich):
 #   pip install pyinstaller
@@ -53,7 +53,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='ETS2-Szosownia-Telemetria-v0.2.0',
+    name='ETS2-Szosownia-Telemetria-v0.2.1',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

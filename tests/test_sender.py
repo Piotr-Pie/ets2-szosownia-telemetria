@@ -174,6 +174,42 @@ def main():
         print(f"[{'OK ' if ok6 else 'FAIL'}] test5 revenue ujemny -> wysłano revenue={ev_neg['revenue'] if ev_neg else None}")
         FAIL += 0 if ok6 else 1
 
+        # --- test 6: pakiet v2 z truck.position (kontrakt v2) -> 202 ---
+        packet_v2 = {
+            "v": 2,
+            "client": {"name": "ets2-telemetry-client", "version": "0.2.1"},
+            "sent_at": "2026-11-09T19:55:00.123Z",
+            "game": {"running": True, "connected": True, "paused": False},
+            "truck": {
+                "speed_kmh": 87.4, "rpm": 1450.0, "gear": 7,
+                "fuel_l": 310.5, "fuel_capacity_l": 400.0, "odometer_km": 12345.6,
+                "position": {"x": 123456.78, "y": 12.3, "z": -98765.43,
+                             "heading_deg": 271.5},
+            },
+        }
+        status_v2 = sender_ok.send(packet_v2)
+        ok7 = status_v2 == 202
+        print(f"[{'OK ' if ok7 else 'FAIL'}] test6 202 pakiet v2 z truck.position: status={status_v2}")
+        FAIL += 0 if ok7 else 1
+        received_v2 = state["received"][-1]
+        ok7b = received_v2.get("v") == 2 and received_v2.get("truck", {}).get("position") == {
+            "x": 123456.78, "y": 12.3, "z": -98765.43, "heading_deg": 271.5,
+        }
+        print(f"[{'OK ' if ok7b else 'FAIL'}] test6b serwer odebral v=2 i truck.position bez zmian: {ok7b}")
+        FAIL += 0 if ok7b else 1
+
+        # --- test 7: pakiet v2 BEZ pozycji (connected=False) -> serwer tez 202 ---
+        packet_v2_no_pos = {
+            "v": 2,
+            "client": {"name": "ets2-telemetry-client", "version": "0.2.1"},
+            "sent_at": "2026-11-09T19:55:05.000Z",
+            "game": {"running": False, "connected": False, "paused": False},
+        }
+        status_v2b = sender_ok.send(packet_v2_no_pos)
+        ok8 = status_v2b == 202
+        print(f"[{'OK ' if ok8 else 'FAIL'}] test7 202 pakiet v2 bez pozycji (offline): status={status_v2b}")
+        FAIL += 0 if ok8 else 1
+
         print()
         print(f"Pakietów odebranych przez serwer testowy: {len(state['received'])}")
         if FAIL:

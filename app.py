@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.0)
+ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.1)
 ========================================================
 
 Okno tkinter (stdlib, bez zadnych zewnetrznych zaleznosci GUI - wymagane

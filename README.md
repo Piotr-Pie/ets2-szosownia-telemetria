@@ -1,4 +1,4 @@
-# ETS2 Szosownia — instalator telemetrii v0.2.0 (jeden plik .exe)
+# ETS2 Szosownia — instalator telemetrii v0.2.1 (jeden plik .exe)
 
 Ten program czyta dane z gry Euro Truck Simulator 2 (prędkość, obroty,
 bieg, paliwo, przebieg) i wysyła je na żywo do Twojego konta na
@@ -11,7 +11,7 @@ poniżej.
 
 ## Instalacja — krok po kroku (bez cmd, bez Pythona, bez edycji plików)
 
-1. Pobierz `ETS2-Szosownia-Telemetria-v0.2.0.exe` ze strony
+1. Pobierz `ETS2-Szosownia-Telemetria-v0.2.1.exe` ze strony
    szosownia.com/pobierz.
 2. Kliknij dwukrotnie plik — otworzy się małe okno programu.
 3. Na szosownia.com zaloguj się przez Steam, wejdź w „Konto” i wygeneruj
@@ -51,13 +51,17 @@ programu.
 
 ## Jakie dane wysyła
 
-Zgodnie z kontraktem `telemetry-contract-v1` (ustalonym z serwerem
-strony) — identyczne pola co w poprzedniej wersji klienta (ZIP, v0.1.3):
+Zgodnie z kontraktem `telemetry-contract-v2` (wstecznie zgodnym z v1,
+ustalonym z serwerem strony) — te same pola co w ZIP (v0.1.4):
 
 - Status gry: czy gra działa, czy jest dostępna telemetria, czy gra jest
   w pauzie.
 - Dane pojazdu: prędkość (km/h), obroty silnika (RPM), bieg, poziom
   paliwa (litry), pojemność zbiornika (litry), przebieg (km).
+- **Nowość od v0.2.1: pozycja na mapie** — współrzędne X/Z świata gry i
+  kierunek jazdy (0–360°), widoczna wyłącznie na Twoim koncie. Gdy
+  odczyt pozycji z gry się nie powiedzie, pole jest po prostu pominięte
+  (nigdy zera zamiast prawdziwej pozycji).
 - Zdarzenie „dostawa zrealizowana”: dystans dostawy (km), zdobyte XP i
   zarobek z zadania — wysyłane tylko raz na dostawę (deduplikacja po
   `event_id`).
@@ -101,9 +105,10 @@ program nie zmienia niczego innego na komputerze.
 
 ```
 app.py                  - okno tkinter (GUI), pętla wysyłkowa w wątku
-core/ets2_core.py       - rdzeń przeniesiony z client/client.py v0.1.3
-                           (parser pamięci, wysyłka, dedup, TLS pin,
-                           poprawki kernel32) BEZ ZMIAN MERYTORYCZNYCH
+core/ets2_core.py       - rdzeń przeniesiony z client/client.py v0.1.4
+                           (parser pamięci, pozycja/kierunek truck.position,
+                           wysyłka, dedup, TLS pin, poprawki kernel32)
+                           BEZ ZMIAN MERYTORYCZNYCH
 core/game_finder.py      - wyszukiwanie gry (rejestr Steam + libraryfolders.vdf),
                            port 1:1 logiki z client/install.ps1
 core/config_store.py      - zapis/odczyt %APPDATA%\ETS2Szosownia\config.json
@@ -119,7 +124,7 @@ Budowa lokalna (wymaga Windows, do testów deweloperskich):
 ```
 pip install pyinstaller
 pyinstaller build.spec
-# wynik: dist\ETS2-Szosownia-Telemetria-v0.2.0.exe
+# wynik: dist\ETS2-Szosownia-Telemetria-v0.2.1.exe
 ```
 
 Testy (Linux, bez GUI/rejestru Windows — patrz zastrzeżenia w każdym
