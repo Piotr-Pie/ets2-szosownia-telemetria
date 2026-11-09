@@ -60,7 +60,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 CLIENT_NAME = "ets2-telemetry-client"
-CLIENT_VERSION = "0.2.1"
+CLIENT_VERSION = "0.2.2"
 
 # commit uzyty do wyliczenia poniższych offsetow (dla audytu / aktualizacji)
 HEADER_COMMIT = "c8910d6e9a5ca0c2fa018942054263292cab19a4"

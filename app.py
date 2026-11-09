@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.1)
+ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.2)
 ========================================================
 
 Okno tkinter (stdlib, bez zadnych zewnetrznych zaleznosci GUI - wymagane
@@ -13,10 +13,45 @@ Caly ekran:
   - przycisk "Zapisz i uruchom"
   - przycisk "Wybierz folder gry..." (filedialog, uzywany gdy automatyczne
     wyszukiwanie w core.game_finder nie znajdzie gry)
+  - checkbox "Uruchamiaj razem z Windows" (DOMYSLNIE WYLACZONY, v0.2.2)
+  - przycisk "Utworz skrot na pulpicie" (v0.2.2)
   - pole statusu (ta sama trosc co linie [status] z CLI v0.1.3, patrz
-    core.ets2_core.status_line / mem_error_status_line)
+    core.ets2_core.status_line / mem_error_status_line) - ten sam tekst
+    jest tooltipem ikony zasobnika, gdy zasobnik dziala (v0.2.2)
   - przycisk "Zatrzymaj"
-Zamkniecie okna (X) zatrzymuje wysylke (WM_DELETE_WINDOW -> stop_event).
+
+NOWOSCI v0.2.2 (zlecenie koordynatora - ikona zasobnika, autostart,
+skrot na pulpicie, pojedyncza instancja):
+  - Zasobnik systemowy (pystray + Pillow, core/tray_icon.py): klik ->
+    pokaz okno; menu "Pokaz okno" / "Wstrzymaj wysylke lub Wznow" /
+    "Zakoncz". Import pystray jest w szerokim try/except (NIE tylko
+    ImportError) - na Linuksie bez serwera X pystray rzuca
+    Xlib.error.DisplayNameError przy samym imporcie (zweryfikowane w tej
+    sesji, patrz tests/test_tray_icon.py i raport) - program dziala dalej
+    jako zwykle okno, gdy zasobnik sie nie uruchomi.
+  - Zamkniecie okna (X) chowa do zasobnika (NIE koczy programu), jesli
+    zasobnik dziala; gdy zasobnik niedostepny - X zamyka program jak w
+    v0.2.1 (logika w core/window_controller.py, testowalna na atrapie
+    okna).
+  - Autostart z Windows (core/autostart.py, winreg, Windows-only) -
+    checkbox zapisuje/usuwa wpis w HKCU Run, wartosc: sciezka do exe w
+    cudzyslowach + flaga --tray.
+  - Skrot na pulpicie (core/shortcut.py, PowerShell przez subprocess,
+    sciezki przekazane WYLACZNIE przez zmienne srodowiskowe - bez
+    wstrzykiwania).
+  - Pojedyncza instancja (core/single_instance.py, named mutex
+    "ETS2SzosowniaTelemetria") - druga instancja przywoluje okno
+    pierwszej i sie zamyka, patrz main().
+  - Start z flaga --tray: okno startuje zminimalizowane do zasobnika; gdy
+    jest juz zapisana konfiguracja (token) i znaleziona gra, wysylka
+    startuje automatycznie bez klikania "Zapisz i uruchom" (UWAGA: to
+    oznacza, ze przy autostarcie z Windows klient wysyla heartbeat (co 5
+    s, game.running=false) CALY CZAS od zalogowania do Windows, nawet gdy
+    gracz nie planuje grac w ten dzien - decyzja do potwierdzenia przez
+    wlasciciela, patrz raport).
+
+Zamkniecie okna (X) zatrzymuje wysylke (WM_DELETE_WINDOW -> stop_event)
+TYLKO gdy zasobnik jest niedostepny - patrz wyzej.
 
 Token NIGDY nie jest wypisywany: nie w tytule okna, nie w polu statusu,
 nie w zadnym logu/wyjatku propagowanym do GUI - wszystkie komunikaty
@@ -37,7 +72,15 @@ from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core import config_store, game_finder, plugin_installer
+from core import (
+    autostart,
+    config_store,
+    game_finder,
+    plugin_installer,
+    shortcut,
+    single_instance,
+    window_controller,
+)
 from core.ets2_core import (
     BUFFER_WINDOW_S,
     CLIENT_NAME,
@@ -58,13 +101,38 @@ from core.ets2_core import (
     safe_read_memory,
     status_line,
 )
+from core.tray_icon import build_icon_image
+
+# Import pystray jest w SZEROKIM except (nie tylko ImportError) - na
+# Linuksie bez serwera X pystray rzuca Xlib.error.DisplayNameError juz
+# przy samym imporcie (zweryfikowane w tej sesji, patrz raport i
+# tests/test_tray_icon.py). Na Windows (produkcja) backend to win32 i ten
+# problem nie wystepuje.
+try:
+    import pystray
+    TRAY_IMPORT_ERROR: Exception | None = None
+except Exception as _e:  # noqa: BLE001 - patrz docstring powyzej
+    pystray = None  # type: ignore[assignment]
+    TRAY_IMPORT_ERROR = _e
+
+TRAY_AVAILABLE = pystray is not None
 
 WINDOW_TITLE = f"ETS2 Szosownia - klient telemetrii v{CLIENT_VERSION}"
 TOKEN_REJECTED_MSG = "Token odrzucony — wygeneruj nowy na szosownia.com/konto"
+TRAY_FLAG = "--tray"
 
 
 def plugin_installed_message(path: str) -> str:
     return f"Plugin zainstalowany w: {path}"
+
+
+def get_exe_path() -> str:
+    """Pelna sciezka do uruchomionego .exe (frozen - PyInstaller) albo do
+    tego pliku .py (dev). Uzywane przez autostart (wpis rejestru) i skrot
+    na pulpicie (TargetPath)."""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    return os.path.abspath(__file__)
 
 
 class TelemetryWorker:
@@ -165,12 +233,14 @@ class TelemetryWorker:
 
 
 class App:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
         self.root.title(WINDOW_TITLE)
         self.root.resizable(False, False)
         self.worker: TelemetryWorker | None = None
         self.game_root: str | None = None
+        self.tray_icon = None
+        self._sending_paused = False
 
         pad = {"padx": 10, "pady": 6}
 
@@ -198,26 +268,111 @@ class App:
         self.stop_btn = ttk.Button(btn_frame, text="Zatrzymaj", command=self.on_stop, state="disabled")
         self.stop_btn.pack(side="left")
 
-        ttk.Separator(frm).grid(row=4, column=0, columnspan=2, sticky="we", padx=10, pady=4)
+        # -- v0.2.2: autostart + skrot na pulpicie ------------------------
+        extras_frame = ttk.Frame(frm)
+        extras_frame.grid(row=4, column=0, columnspan=2, sticky="we", **pad)
+        self.autostart_var = tk.BooleanVar(value=False)
+        try:
+            self.autostart_var.set(autostart.is_autostart_enabled())
+        except Exception:  # noqa: BLE001 - checkbox po prostu zostaje wylaczony
+            pass
+        self.autostart_chk = ttk.Checkbutton(
+            extras_frame,
+            text="Uruchamiaj razem z Windows",
+            variable=self.autostart_var,
+            command=self.on_toggle_autostart,
+        )
+        self.autostart_chk.pack(side="left", padx=(0, 10))
+        self.shortcut_btn = ttk.Button(
+            extras_frame, text="Utwórz skrót na pulpicie", command=self.on_create_shortcut
+        )
+        self.shortcut_btn.pack(side="left")
 
-        ttk.Label(frm, text="Status:").grid(row=5, column=0, columnspan=2, sticky="w", padx=10)
+        ttk.Separator(frm).grid(row=5, column=0, columnspan=2, sticky="we", padx=10, pady=4)
+
+        ttk.Label(frm, text="Status:").grid(row=6, column=0, columnspan=2, sticky="w", padx=10)
         self.status_var = tk.StringVar(value="Gotowy. Wklej token i kliknij „Zapisz i uruchom”.")
         self.status_label = ttk.Label(
             frm, textvariable=self.status_var, wraplength=380, foreground="#222"
         )
-        self.status_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+        self.status_label.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.tray_controller = window_controller.TrayWindowController(
+            self.root, tray_available=TRAY_AVAILABLE, on_stop_sending=self._stop_sending_for_quit
+        )
+        self.root.protocol("WM_DELETE_WINDOW", self.tray_controller.on_window_close_button)
+
+        if TRAY_AVAILABLE:
+            self._setup_tray_icon()
 
         self._load_existing_config()
         self._auto_find_game()
+
+        if start_hidden:
+            self.root.withdraw()
+            self.tray_controller.visible = False
+            if config_store.load_config() is not None and self.game_root:
+                self.on_save_and_start()
+
+    # -- zasobnik (pystray) -------------------------------------------------
+
+    def _setup_tray_icon(self):
+        """Buduje i startuje ikone zasobnika w osobnym wątku (daemon).
+        Kazdy blad (np. brak serwera X na Linuksie) jest chwytany - program
+        dziala dalej jako zwykle okno (patrz TRAY_AVAILABLE/docstring)."""
+        try:
+            menu = pystray.Menu(
+                pystray.MenuItem("Pokaż okno", self._on_tray_show, default=True),
+                pystray.MenuItem(self._tray_pause_label, self._on_tray_toggle_pause),
+                pystray.MenuItem("Zakończ", self._on_tray_quit),
+            )
+            self.tray_icon = pystray.Icon(
+                "ets2szosownia", build_icon_image(), self.status_var.get(), menu=menu
+            )
+            self._tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+            self._tray_thread.start()
+        except Exception:  # noqa: BLE001
+            self.tray_icon = None
+            self.tray_controller.tray_available = False
+
+    def _tray_pause_label(self, item) -> str:
+        return "Wznów wysyłkę" if self._sending_paused else "Wstrzymaj wysyłkę"
+
+    def _on_tray_show(self, icon, item):
+        self.root.after(0, self.tray_controller.show)
+
+    def _on_tray_toggle_pause(self, icon, item):
+        self.root.after(0, self._handle_tray_pause_toggle)
+
+    def _handle_tray_pause_toggle(self):
+        if self._sending_paused:
+            self.on_save_and_start()
+        else:
+            self.on_stop()
+
+    def _on_tray_quit(self, icon, item):
+        icon.stop()
+        self.root.after(0, self.tray_controller.quit)
+
+    def _stop_sending_for_quit(self):
+        if self.worker:
+            self.worker.stop()
 
     # -- pomocnicze -------------------------------------------------------
 
     def set_status(self, text: str):
         """Wolane z wątku roboczego - Tkinter nie jest thread-safe, wiec
-        marshalling przez root.after(0, ...)."""
-        self.root.after(0, lambda: self.status_var.set(text))
+        marshalling przez root.after(0, ...). Ten sam tekst trafia do
+        tooltipa ikony zasobnika (v0.2.2), jesli zasobnik dziala."""
+        self.root.after(0, lambda: self._apply_status(text))
+
+    def _apply_status(self, text: str):
+        self.status_var.set(text)
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.title = text[:127]  # limit tooltipa Windows
+            except Exception:  # noqa: BLE001
+                pass
 
     def _load_existing_config(self):
         cfg = config_store.load_config()
@@ -283,6 +438,7 @@ class App:
         self.choose_btn.config(state="disabled")
         self.token_entry.config(state="disabled")
         self.stop_btn.config(state="normal")
+        self._sending_paused = False
 
         self.worker = TelemetryWorker(token, None, self.set_status)
         self.worker.start()
@@ -295,17 +451,54 @@ class App:
         self.token_entry.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.status_var.set("Zatrzymano przez użytkownika.")
+        self._sending_paused = True
 
-    def on_close(self):
-        if self.worker:
-            self.worker.stop()
-        self.root.destroy()
+    def on_toggle_autostart(self):
+        """Checkbox 'Uruchamiaj razem z Windows' - zapisuje/usuwa wpis w
+        HKCU Run (core/autostart.py). Blad (np. brak dostepu do rejestru)
+        pokazuje komunikat i przywraca checkbox do stanu przed klikiem."""
+        enabled = self.autostart_var.get()
+        exe_path = get_exe_path()
+        try:
+            if enabled:
+                autostart.enable_autostart(exe_path)
+            else:
+                autostart.disable_autostart()
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(
+                "Błąd autostartu", f"Nie udało się zmienić wpisu autostartu: {e}"
+            )
+            self.autostart_var.set(not enabled)
+
+    def on_create_shortcut(self):
+        """Przycisk 'Utwórz skrót na pulpicie' (core/shortcut.py,
+        PowerShell przez subprocess, sciezki tylko przez zmienne
+        srodowiskowe - bez wstrzykiwania)."""
+        exe_path = get_exe_path()
+        try:
+            path = shortcut.create_desktop_shortcut(exe_path)
+        except shortcut.ShortcutError as e:
+            messagebox.showerror("Błąd tworzenia skrótu", str(e))
+            return
+        messagebox.showinfo("Skrót utworzony", f"Skrót utworzony: {path}")
 
 
 def main():
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    tray_flag = TRAY_FLAG in sys.argv[1:]
+
+    guard = single_instance.SingleInstanceGuard()
+    if not guard.acquire():
+        # Druga instancja: przywolaj okno pierwszej i zakoncz sie, zamiast
+        # tworzyc drugiego klienta (patrz core/single_instance.py).
+        single_instance.try_focus_existing_window(WINDOW_TITLE)
+        return
+
+    try:
+        root = tk.Tk()
+        App(root, start_hidden=tray_flag)
+        root.mainloop()
+    finally:
+        guard.release()
 
 
 if __name__ == "__main__":

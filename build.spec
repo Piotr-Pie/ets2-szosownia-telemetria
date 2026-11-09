@@ -1,15 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
-# ETS2 Szosownia - PyInstaller spec, v0.2.1
+# ETS2 Szosownia - PyInstaller spec, v0.2.2
 # ==========================================
 # Budowany na runs-on: windows-latest (patrz .github/workflows/build.yml,
 # PUSH automatyczny z konta Piotr-Pie - patrz raport o zakresie tokena).
 #
 # --onefile --windowed (bez konsoli), DLL pluginu wbudowany jako dane
 # (--add-data), nazwa wynikowa:
-#   ETS2-Szosownia-Telemetria-v0.2.1.exe
+#   ETS2-Szosownia-Telemetria-v0.2.2.exe
+#
+# NOWOSC v0.2.2: zasobnik systemowy (pystray + Pillow) - wymaga, zeby
+# workflow instalowal requirements.txt PRZED `pyinstaller build.spec`
+# (patrz uwaga w requirements.txt i w raporcie - NIE jest to jeszcze
+# zrobione w zapisanym .github/workflows/build.yml).
 #
 # Budowa lokalna (Windows, do testow deweloperskich):
-#   pip install pyinstaller
+#   pip install pyinstaller -r requirements.txt
 #   pyinstaller build.spec
 #
 # Ikona: brak (opcjonalna, NIE uzywamy logotypow SCS/Steam - zgodnie ze
@@ -32,10 +37,21 @@ a = Analysis(
         'core.game_finder',
         'core.config_store',
         'core.plugin_installer',
+        'core.autostart',
+        'core.shortcut',
+        'core.single_instance',
+        'core.tray_icon',
+        'core.window_controller',
         'tkinter',
         'tkinter.filedialog',
         'tkinter.messagebox',
         'tkinter.ttk',
+        'pystray',
+        'pystray._win32',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageDraw',
+        'PIL.ImageFont',
     ],
     hookspath=[],
     hooksconfig={},
@@ -53,7 +69,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='ETS2-Szosownia-Telemetria-v0.2.1',
+    name='ETS2-Szosownia-Telemetria-v0.2.2',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

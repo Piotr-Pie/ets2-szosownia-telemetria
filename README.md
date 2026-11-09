@@ -1,17 +1,37 @@
-# ETS2 Szosownia — instalator telemetrii v0.2.1 (jeden plik .exe)
+# ETS2 Szosownia — instalator telemetrii v0.2.2 (jeden plik .exe)
 
 Ten program czyta dane z gry Euro Truck Simulator 2 (prędkość, obroty,
 bieg, paliwo, przebieg) i wysyła je na żywo do Twojego konta na
 szosownia.com. Działa WYŁĄCZNIE na Twoim komputerze z Windows, w tle,
-kiedy grasz.
+kiedy grasz. Od v0.2.2 program ma ikonę w zasobniku systemowym, może
+startować razem z Windows i zrobić sobie skrót na pulpicie — patrz
+sekcja „Nowości w v0.2.2” niżej.
 
 Token dostępu nigdy nie jest wypisywany na ekranie, w logu, w tytule
 okna ani nigdzie zapisywany poza plikiem konfiguracyjnym opisanym
 poniżej.
 
+## Nowości w v0.2.2
+
+- **Ikona w zasobniku systemowym** (przy zegarze) — litera „S” w kolorach
+  strony (bez logotypów SCS/Steam). Klik na ikonę pokazuje okno. Menu
+  (prawy klik): „Pokaż okno”, „Wstrzymaj wysyłkę” / „Wznów wysyłkę”,
+  „Zakończ”. Tooltip ikony pokazuje ten sam tekst co pole statusu.
+- **Zamknięcie okna (X)** teraz CHOWA program do zasobnika (nie zamyka
+  go) — wysyłka działa dalej w tle. Żeby naprawdę zamknąć program, użyj
+  „Zakończ” z menu zasobnika.
+- **Checkbox „Uruchamiaj razem z Windows”** (domyślnie WYŁĄCZONY). Po
+  włączeniu program startuje razem z Windows, od razu zminimalizowany do
+  zasobnika, i — jeśli token był już zapisany wcześniej — zaczyna wysyłać
+  dane automatycznie, bez klikania niczego.
+- **Przycisk „Utwórz skrót na pulpicie”** — tworzy skrót do programu na
+  Twoim pulpicie.
+- **Jedna instancja programu** — drugie kliknięcie w .exe (albo w jego
+  skrót) nie otwiera drugiego okna, tylko przywołuje już uruchomione.
+
 ## Instalacja — krok po kroku (bez cmd, bez Pythona, bez edycji plików)
 
-1. Pobierz `ETS2-Szosownia-Telemetria-v0.2.1.exe` ze strony
+1. Pobierz `ETS2-Szosownia-Telemetria-v0.2.2.exe` ze strony
    szosownia.com/pobierz.
 2. Kliknij dwukrotnie plik — otworzy się małe okno programu.
 3. Na szosownia.com zaloguj się przez Steam, wejdź w „Konto” i wygeneruj
@@ -28,9 +48,14 @@ poniżej.
 7. Uruchom (albo przełącz się do) grę Euro Truck Simulator 2 i wjedź do
    kabiny — po chwili dane powinny pojawić się na Twoim profilu na
    szosownia.com.
+8. (Opcjonalnie) Zaznacz „Uruchamiaj razem z Windows”, jeśli chcesz, żeby
+   program startował sam przy włączeniu komputera — i/albo kliknij
+   „Utwórz skrót na pulpicie”.
 
-Żeby zatrzymać wysyłanie danych, kliknij „Zatrzymaj” albo zamknij okno
-programu.
+Żeby zatrzymać wysyłanie danych, kliknij „Zatrzymaj” (w oknie) albo
+„Wstrzymaj wysyłkę” (w menu zasobnika). Zamknięcie okna (X) NIE zatrzymuje
+wysyłki — program dalej działa w zasobniku; użyj „Zakończ” z menu
+zasobnika, żeby naprawdę zamknąć program.
 
 ## Co robi program, krok po kroku (dla zainteresowanych)
 
@@ -104,7 +129,8 @@ program nie zmienia niczego innego na komputerze.
 ## Dla developerów — struktura repo i budowa
 
 ```
-app.py                  - okno tkinter (GUI), pętla wysyłkowa w wątku
+app.py                  - okno tkinter (GUI), pętla wysyłkowa w wątku,
+                           zasobnik (pystray), autostart, skrót (v0.2.2)
 core/ets2_core.py       - rdzeń przeniesiony z client/client.py v0.1.4
                            (parser pamięci, pozycja/kierunek truck.position,
                            wysyłka, dedup, TLS pin, poprawki kernel32)
@@ -113,8 +139,14 @@ core/game_finder.py      - wyszukiwanie gry (rejestr Steam + libraryfolders.vdf)
                            port 1:1 logiki z client/install.ps1
 core/config_store.py      - zapis/odczyt %APPDATA%\ETS2Szosownia\config.json
 core/plugin_installer.py  - kopiowanie DLL + weryfikacja SHA-256
+core/autostart.py         - wpis HKCU Run (autostart z Windows), v0.2.2
+core/shortcut.py           - skrót .lnk na pulpicie przez PowerShell, v0.2.2
+core/single_instance.py    - named mutex (jedna instancja programu), v0.2.2
+core/tray_icon.py          - obraz ikony zasobnika (Pillow), v0.2.2
+core/window_controller.py  - logika "X = chowaj do zasobnika", v0.2.2
 assets/scs-telemetry.dll  - plugin SCS SDK (wbudowywany w .exe)
 build.spec                - specyfikacja PyInstaller (--onefile --windowed)
+requirements.txt           - zaleznosci GUI (pystray, Pillow), v0.2.2
 tests/                    - testy (patrz niżej, uruchamiane na Linuksie)
 .github/workflows/build.yml - budowa automatyczna na windows-latest (GitHub Actions)
 ```
@@ -122,9 +154,9 @@ tests/                    - testy (patrz niżej, uruchamiane na Linuksie)
 Budowa lokalna (wymaga Windows, do testów deweloperskich):
 
 ```
-pip install pyinstaller
+pip install pyinstaller -r requirements.txt
 pyinstaller build.spec
-# wynik: dist\ETS2-Szosownia-Telemetria-v0.2.1.exe
+# wynik: dist\ETS2-Szosownia-Telemetria-v0.2.2.exe
 ```
 
 Testy (Linux, bez GUI/rejestru Windows — patrz zastrzeżenia w każdym
@@ -140,4 +172,9 @@ python3 tests/test_game_finder.py
 python3 tests/test_config_store.py
 python3 tests/test_plugin_installer.py
 python3 tests/test_no_token_leak.py
+python3 tests/test_autostart.py
+python3 tests/test_shortcut.py
+python3 tests/test_single_instance.py
+python3 tests/test_tray_icon.py
+python3 tests/test_window_controller.py
 ```
