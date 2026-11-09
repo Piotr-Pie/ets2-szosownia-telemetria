@@ -101,21 +101,28 @@ from core.ets2_core import (
     safe_read_memory,
     status_line,
 )
-from core.tray_icon import build_icon_image
-
-# Import pystray jest w SZEROKIM except (nie tylko ImportError) - na
+# Import pystray + core.tray_icon (Pillow) jest w JEDNYM SZEROKIM except
+# (nie tylko ImportError) - ZNALEZISKO tej sesji (patrz raport): na
 # Linuksie bez serwera X pystray rzuca Xlib.error.DisplayNameError juz
-# przy samym imporcie (zweryfikowane w tej sesji, patrz raport i
-# tests/test_tray_icon.py). Na Windows (produkcja) backend to win32 i ten
-# problem nie wystepuje.
+# przy samym imporcie; a w buildzie na GitHub Actions z tej sesji
+# pystray/Pillow NIE zostaly zainstalowane przed krokiem PyInstaller
+# (workflow robi tylko `pip install pyinstaller`, patrz requirements.txt
+# i raport) - PyInstaller zbudowal .exe "success", ale BEZ modulow PIL/
+# pystray w srodku (zweryfikowane przez inspekcje archiwum PyInstallera -
+# brak PIL._imaging.pyd/pystray w TOC). Gdyby ten import byl bezwarunkowy,
+# .exe rozbilby sie zaraz po starcie (ModuleNotFoundError: PIL) zamiast
+# dzialac bez zasobnika - stad SZEROKI except tutaj obejmuje OBA importy
+# (pystray i core.tray_icon), nie tylko pystray.
 try:
     import pystray
+    from core.tray_icon import build_icon_image
     TRAY_IMPORT_ERROR: Exception | None = None
 except Exception as _e:  # noqa: BLE001 - patrz docstring powyzej
     pystray = None  # type: ignore[assignment]
+    build_icon_image = None  # type: ignore[assignment]
     TRAY_IMPORT_ERROR = _e
 
-TRAY_AVAILABLE = pystray is not None
+TRAY_AVAILABLE = pystray is not None and build_icon_image is not None
 
 WINDOW_TITLE = f"ETS2 Szosownia - klient telemetrii v{CLIENT_VERSION}"
 TOKEN_REJECTED_MSG = "Token odrzucony — wygeneruj nowy na szosownia.com/konto"
