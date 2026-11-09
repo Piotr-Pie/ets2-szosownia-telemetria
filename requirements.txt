@@ -1,15 +1,11 @@
-# ETS2 Szosownia - zaleznosci klienta .exe (v0.2.2)
+# ETS2 Szosownia - zaleznosci klienta .exe (v0.2.3)
 #
-# UWAGA DLA WLASCICIELA (patrz raport client-exe-v0.2.2.md): obecny workflow
-# .github/workflows/build.yml (i jego uniwersalna wersja build-universal.yml)
-# wykonuje tylko `pip install pyinstaller` PRZED `pyinstaller build.spec`.
-# Od v0.2.2 app.py importuje pystray + Pillow (zasobnik systemowy) - jesli
-# nie zostaną zainstalowane w kroku build.yml PRZED PyInstaller, build na
-# Windows (Actions) nie znajdzie tych modulow i sie wysypie. Potrzebny
-# jest w workflow dodatkowy krok (np. `pip install -r requirements.txt`
-# albo `pip install pyinstaller pystray Pillow`) PRZED "Build exe" - NIE
-# jest to zrobione automatycznie w tej sesji (token bez zakresu workflow,
-# patrz zlecenie), dodaj go recznie przy wklejaniu build-universal.yml.
+# Stan na v0.2.3 (zweryfikowane w tej sesji): .github/workflows/build.yml
+# na origin/main (commit 544c542) JUZ instaluje te wersje bezposrednio w
+# kroku "Install PyInstaller" (`pip install pyinstaller pystray==0.19.5
+# "Pillow>=10,<14"`) PRZED `pyinstaller build.spec`. Poprzednia uwaga o
+# brakujacym kroku (z v0.2.2) byla aktualna tylko dla starszego commitu
+# e0c5272 - NIEAKTUALNA od aktualizacji workflow na GitHubie.
 
 pystray==0.19.5
 Pillow>=10,<14

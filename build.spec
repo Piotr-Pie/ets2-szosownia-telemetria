@@ -1,17 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
-# ETS2 Szosownia - PyInstaller spec, v0.2.2
+# ETS2 Szosownia - PyInstaller spec, v0.2.3
 # ==========================================
 # Budowany na runs-on: windows-latest (patrz .github/workflows/build.yml,
 # PUSH automatyczny z konta Piotr-Pie - patrz raport o zakresie tokena).
 #
 # --onefile --windowed (bez konsoli), DLL pluginu wbudowany jako dane
 # (--add-data), nazwa wynikowa:
-#   ETS2-Szosownia-Telemetria-v0.2.2.exe
+#   ETS2-Szosownia-Telemetria-v0.2.3.exe
 #
-# NOWOSC v0.2.2: zasobnik systemowy (pystray + Pillow) - wymaga, zeby
-# workflow instalowal requirements.txt PRZED `pyinstaller build.spec`
-# (patrz uwaga w requirements.txt i w raporcie - NIE jest to jeszcze
-# zrobione w zapisanym .github/workflows/build.yml).
+# v0.2.2: zasobnik systemowy (pystray + Pillow) - workflow instaluje
+# pystray+Pillow PRZED `pyinstaller build.spec` (zweryfikowane w sesji
+# v0.2.3 - .github/workflows/build.yml NIE jest tu zmieniany).
+#
+# v0.2.3: wariant B autostartu - start z --tray TYLKO chowa do zasobnika,
+# wysylka NIE startuje automatycznie (patrz app.py). Bez zmian w
+# build.spec poza nazwa wynikowego .exe.
 #
 # Budowa lokalna (Windows, do testow deweloperskich):
 #   pip install pyinstaller -r requirements.txt
@@ -69,7 +72,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='ETS2-Szosownia-Telemetria-v0.2.2',
+    name='ETS2-Szosownia-Telemetria-v0.2.3',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

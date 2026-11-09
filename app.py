@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.2)
+ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.3)
 ========================================================
 
 Okno tkinter (stdlib, bez zadnych zewnetrznych zaleznosci GUI - wymagane
@@ -42,13 +42,15 @@ skrot na pulpicie, pojedyncza instancja):
   - Pojedyncza instancja (core/single_instance.py, named mutex
     "ETS2SzosowniaTelemetria") - druga instancja przywoluje okno
     pierwszej i sie zamyka, patrz main().
-  - Start z flaga --tray: okno startuje zminimalizowane do zasobnika; gdy
-    jest juz zapisana konfiguracja (token) i znaleziona gra, wysylka
-    startuje automatycznie bez klikania "Zapisz i uruchom" (UWAGA: to
-    oznacza, ze przy autostarcie z Windows klient wysyla heartbeat (co 5
-    s, game.running=false) CALY CZAS od zalogowania do Windows, nawet gdy
-    gracz nie planuje grac w ten dzien - decyzja do potwierdzenia przez
-    wlasciciela, patrz raport).
+  - Start z flaga --tray: okno startuje zminimalizowane do zasobnika;
+    wysylka NIE startuje automatycznie (decyzja wlasciciela 2026-11-09,
+    wariant B - v0.2.3). Nawet gdy jest zapisany token i znaleziona gra,
+    tryb --tray TYLKO chowa okno do zasobnika. Status/tooltip po starcie
+    z --tray: "czeka na start wysyłki" (TRAY_WAITING_STATUS). Wysylka
+    startuje dopiero, gdy wlasciciel kliknie "Zapisz i uruchom" w oknie
+    albo wybierze "Wznów wysyłkę" z menu zasobnika (patrz
+    _handle_tray_pause_toggle). Zwykly start bez --tray (dwuklik na .exe)
+    dziala jak dotychczas - bez zmian.
 
 Zamkniecie okna (X) zatrzymuje wysylke (WM_DELETE_WINDOW -> stop_event)
 TYLKO gdy zasobnik jest niedostepny - patrz wyzej.
@@ -127,6 +129,9 @@ TRAY_AVAILABLE = pystray is not None and build_icon_image is not None
 WINDOW_TITLE = f"ETS2 Szosownia - klient telemetrii v{CLIENT_VERSION}"
 TOKEN_REJECTED_MSG = "Token odrzucony — wygeneruj nowy na szosownia.com/konto"
 TRAY_FLAG = "--tray"
+# v0.2.3 (wariant B): tekst statusu/tooltipa zasobnika po starcie z --tray,
+# zanim wlasciciel kliknie "Zapisz i uruchom" albo "Wznów wysyłkę".
+TRAY_WAITING_STATUS = "czeka na start wysyłki"
 
 
 def plugin_installed_message(path: str) -> str:
@@ -247,7 +252,11 @@ class App:
         self.worker: TelemetryWorker | None = None
         self.game_root: str | None = None
         self.tray_icon = None
-        self._sending_paused = False
+        # v0.2.3: logika "kiedy wysylka startuje" wydzielona do
+        # core.window_controller.TraySendGate (testowalna bez tkinter).
+        self.tray_gate = window_controller.TraySendGate(
+            on_start_sending=self.on_save_and_start, on_stop_sending=self.on_stop
+        )
 
         pad = {"padx": 10, "pady": 6}
 
@@ -316,10 +325,22 @@ class App:
         self._auto_find_game()
 
         if start_hidden:
+            # v0.2.3 (wariant B, decyzja wlasciciela 2026-11-09): start z
+            # --tray TYLKO chowa okno do zasobnika - wysylka NIE startuje
+            # automatycznie, nawet gdy jest zapisany token i znaleziona
+            # gra. Wlasciciel musi kliknac "Zapisz i uruchom" w oknie albo
+            # wybrac "Wznów wysyłkę" z menu zasobnika (patrz tray_gate).
+            # tray_gate.start_from_tray() oznacza stan jako wstrzymany, aby
+            # menu zasobnika od razu pokazywalo "Wznów wysyłkę".
             self.root.withdraw()
             self.tray_controller.visible = False
-            if config_store.load_config() is not None and self.game_root:
-                self.on_save_and_start()
+            self.tray_gate.start_from_tray()
+            self.status_var.set(TRAY_WAITING_STATUS)
+            if self.tray_icon is not None:
+                try:
+                    self.tray_icon.title = TRAY_WAITING_STATUS
+                except Exception:  # noqa: BLE001
+                    pass
 
     # -- zasobnik (pystray) -------------------------------------------------
 
@@ -343,19 +364,13 @@ class App:
             self.tray_controller.tray_available = False
 
     def _tray_pause_label(self, item) -> str:
-        return "Wznów wysyłkę" if self._sending_paused else "Wstrzymaj wysyłkę"
+        return "Wznów wysyłkę" if self.tray_gate.sending_paused else "Wstrzymaj wysyłkę"
 
     def _on_tray_show(self, icon, item):
         self.root.after(0, self.tray_controller.show)
 
     def _on_tray_toggle_pause(self, icon, item):
-        self.root.after(0, self._handle_tray_pause_toggle)
-
-    def _handle_tray_pause_toggle(self):
-        if self._sending_paused:
-            self.on_save_and_start()
-        else:
-            self.on_stop()
+        self.root.after(0, self.tray_gate.toggle_from_tray_menu)
 
     def _on_tray_quit(self, icon, item):
         icon.stop()
@@ -445,7 +460,7 @@ class App:
         self.choose_btn.config(state="disabled")
         self.token_entry.config(state="disabled")
         self.stop_btn.config(state="normal")
-        self._sending_paused = False
+        self.tray_gate.mark_started()
 
         self.worker = TelemetryWorker(token, None, self.set_status)
         self.worker.start()
@@ -458,7 +473,7 @@ class App:
         self.token_entry.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.status_var.set("Zatrzymano przez użytkownika.")
-        self._sending_paused = True
+        self.tray_gate.mark_stopped()
 
     def on_toggle_autostart(self):
         """Checkbox 'Uruchamiaj razem z Windows' - zapisuje/usuwa wpis w
