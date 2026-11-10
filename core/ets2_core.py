@@ -89,7 +89,7 @@ from datetime import datetime, timezone
 from core.job_stats import JobStatsAccumulator
 
 CLIENT_NAME = "ets2-telemetry-client"
-CLIENT_VERSION = "0.2.5"
+CLIENT_VERSION = "0.2.6"
 
 # commit uzyty do wyliczenia poniższych offsetow (dla audytu / aktualizacji)
 HEADER_COMMIT = "c8910d6e9a5ca0c2fa018942054263292cab19a4"
@@ -807,6 +807,19 @@ class EventTracker:
         (kontrakt v4 S2)."""
         self._job_stats.abort()
 
+    def reset_for_pause(self) -> None:
+        """Wolac przy KAZDYM wejsciu w stan wstrzymany - recznym i
+        automatycznym (kontrakt v5 S2, core/telemetry_worker.py
+        pause()/_enter_auto_pause()): zeruje akumulator statystyk
+        zlecenia (jak on_disconnected) ORAZ resetuje punkt odniesienia
+        detekcji krawedzi jobDelivered (_last_flag = None) - zeby
+        dostawa, ktora "zaszla" w czasie wstrzymania (gdy klient NIE
+        czyta pamieci SCS wcale), nie wygenerowala falszywego zdarzenia
+        przy pierwszym odczycie po wznowieniu (porownanie wypadaloby
+        wzgledem stanu sprzed przerwy, nieaktualnego)."""
+        self._last_flag = None
+        self._job_stats.abort()
+
     def check(self, parsed: dict) -> dict | None:
         """Wolac TYLKO gdy connected=True (parsed pochodzi z odczytanej
         pamieci SCS w tym ticku)."""
@@ -859,9 +872,13 @@ class EventTracker:
 
 
 def build_packet(connected: bool, running: bool, parsed: dict | None,
-                  events: list[dict]) -> dict:
+                  events: list[dict], baseline: bool = False) -> dict:
+    """baseline: kontrakt v5 S3 - True TYLKO na pierwszym pakiecie
+    zbudowanym po kazdym wznowieniu wysylki (recznym lub automatycznym).
+    Pole jest OPCJONALNE w JSON (kontrakt v5 S4) - obecne i True tylko
+    gdy baseline=True, w przeciwnym razie POMINIETE (nie "false")."""
     packet = {
-        "v": 4,
+        "v": 5,
         "client": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
         "sent_at": iso_now(),
         "game": {
@@ -870,6 +887,8 @@ def build_packet(connected: bool, running: bool, parsed: dict | None,
             "paused": bool(parsed["paused"]) if (connected and parsed) else False,
         },
     }
+    if baseline:
+        packet["baseline"] = True
     if connected and parsed:
         packet["truck"] = {
             "speed_kmh": round(parsed["speed_mps"] * 3.6, 1),

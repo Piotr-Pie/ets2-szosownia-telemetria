@@ -101,6 +101,33 @@ def test_corrupted_json_treated_as_missing():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def test_game_gate_enabled_defaults_true_when_missing(config_dir=None):
+    """v0.2.6 (kontrakt v5): klucz game_gate_enabled nieobecny w pliku
+    (config.json zapisany starsza wersja klienta) -> domyslnie True."""
+    tmpdir = tempfile.mkdtemp(prefix="ets2-config-test-")
+    try:
+        cfg_dir = os.path.join(tmpdir, "ETS2Szosownia")
+        os.makedirs(cfg_dir)
+        with open(config_store.get_config_path(cfg_dir), "w", encoding="utf-8") as f:
+            json.dump({"token": "stary-token"}, f)  # bez game_gate_enabled
+        loaded = config_store.load_config(config_dir=cfg_dir)
+        check_true("game_gate_enabled domyslnie True gdy brak klucza (stary config.json)",
+                   loaded.get("game_gate_enabled") is True)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_game_gate_enabled_roundtrip_explicit_false():
+    tmpdir = tempfile.mkdtemp(prefix="ets2-config-test-")
+    try:
+        cfg_dir = os.path.join(tmpdir, "ETS2Szosownia")
+        config_store.save_config("tok", game_gate_enabled=False, config_dir=cfg_dir)
+        loaded = config_store.load_config(config_dir=cfg_dir)
+        check("game_gate_enabled=False zapisany i odczytany", loaded.get("game_gate_enabled"), False)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def test_config_file_never_contains_server_url_field():
     """server_url jest na stale w kodzie (SERVER_URL), NIE w config.json -
     sprawdzamy, ze save_config() nigdy go tam nie wpisuje."""
@@ -122,6 +149,8 @@ if __name__ == "__main__":
     test_save_and_load_roundtrip_with_pin()
     test_save_empty_token_raises()
     test_corrupted_json_treated_as_missing()
+    test_game_gate_enabled_defaults_true_when_missing()
+    test_game_gate_enabled_roundtrip_explicit_false()
     test_config_file_never_contains_server_url_field()
     print()
     if FAIL:

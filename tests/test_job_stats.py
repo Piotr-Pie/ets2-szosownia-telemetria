@@ -161,7 +161,7 @@ def test_packet_v4_and_fuel_avg_consumption_null_cases():
     raw = build_fake_memory_job(onJob=False, fuelAvgConsumption=0.02)  # 2 l/100km, poprawna
     p = parse_telemetry(raw)
     packet = build_packet(connected=True, running=True, parsed=p, events=[])
-    check("packet v == 4", packet["v"], 4)
+    check("packet v == 5 (kontrakt v5, v0.2.6)", packet["v"], 5)
     check("fuel_avg_consumption_l_per_100km poprawna wartosc (2 l/100km)",
           packet["truck"]["fuel_avg_consumption_l_per_100km"], 2.0)
 

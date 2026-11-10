@@ -208,7 +208,7 @@ def test_build_packet_onjob_true_includes_job_object():
     raw = build_fake_job_memory(onJob=True)
     p = parse_telemetry(raw)
     packet = build_packet(connected=True, running=True, parsed=p, events=[])
-    check("v == 4", packet["v"], 4)
+    check("v == 5 (kontrakt v5, v0.2.6)", packet["v"], 5)
     ok = isinstance(packet.get("job"), dict) and packet["job"].get("cargo") == "Ryby"
     print(f"[{'OK ' if ok else 'FAIL'}] onJob=True -> job jest obiektem: {packet.get('job')}")
     global FAIL

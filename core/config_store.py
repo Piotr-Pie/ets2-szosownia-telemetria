@@ -40,10 +40,16 @@ def get_config_path(config_dir: str | None = None) -> str:
 
 
 def load_config(config_dir: str | None = None) -> dict | None:
-    """Zwraca dict {'token':..., 'tls_sha256_pin': ... (opcjonalny)} albo
-    None, gdy plik nie istnieje jeszcze (pierwsze uruchomienie - GUI pokaze
-    puste pole tokena). Plik uszkodzony (zly JSON) -> None, tak jak brak
-    pliku (GUI poprosi o ponowne wklejenie tokena, zamiast siadac)."""
+    """Zwraca dict {'token':..., 'tls_sha256_pin': ... (opcjonalny),
+    'game_gate_enabled': bool} albo None, gdy plik nie istnieje jeszcze
+    (pierwsze uruchomienie - GUI pokaze puste pole tokena). Plik
+    uszkodzony (zly JSON) -> None, tak jak brak pliku (GUI poprosi o
+    ponowne wklejenie tokena, zamiast siadac).
+
+    game_gate_enabled (kontrakt v5, v0.2.6): "Wysyłaj tylko gdy gra
+    działa" - DOMYSLNIE True, rowniez dla config.json zapisanych przez
+    starsze wersje klienta (brak klucza = True, zgodnie ze zleceniem:
+    nowa opcja domyslnie wlaczona)."""
     path = get_config_path(config_dir)
     if not os.path.exists(path):
         return None
@@ -54,7 +60,10 @@ def load_config(config_dir: str | None = None) -> dict | None:
         return None
     if not isinstance(cfg, dict) or not cfg.get("token"):
         return None
-    result = {"token": str(cfg["token"])}
+    result = {
+        "token": str(cfg["token"]),
+        "game_gate_enabled": bool(cfg.get("game_gate_enabled", True)),
+    }
     pin = cfg.get("tls_sha256_pin")
     if pin:
         result["tls_sha256_pin"] = str(pin)
@@ -62,17 +71,21 @@ def load_config(config_dir: str | None = None) -> dict | None:
 
 
 def save_config(token: str, tls_sha256_pin: str | None = None,
+                 game_gate_enabled: bool = True,
                  config_dir: str | None = None) -> str:
     """Zapisuje config.json, tworzac katalog %APPDATA%\\ETS2Szosownia przy
     pierwszym zapisie. tls_sha256_pin domyslnie NIE jest zapisywany
-    (zgodnie ze zleceniem - gracz nie musi znac tego mechanizmu). Zwraca
+    (zgodnie ze zleceniem - gracz nie musi znac tego mechanizmu).
+    game_gate_enabled (v0.2.6): "Wysyłaj tylko gdy gra działa", DOMYSLNIE
+    True - zapisywany zawsze (w odroznieniu od pin, ktory jest opcjonalny),
+    zeby load_config() mogl odtworzyc dokladnie ten wybor gracza. Zwraca
     sciezke zapisanego pliku. Nie loguje/wypisuje tokena nigdzie."""
     if not token or not token.strip():
         raise ValueError("Token nie moze byc pusty.")
     cdir = config_dir or get_config_dir()
     os.makedirs(cdir, exist_ok=True)
     path = get_config_path(cdir)
-    cfg = {"token": token.strip()}
+    cfg = {"token": token.strip(), "game_gate_enabled": bool(game_gate_enabled)}
     if tls_sha256_pin:
         cfg["tls_sha256_pin"] = tls_sha256_pin.strip()
     tmp_path = path + ".tmp"

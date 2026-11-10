@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.3)
+ETS2 Szosownia - klient telemetrii, okno .exe (v0.2.6)
 ========================================================
 
 Okno tkinter (stdlib, bez zadnych zewnetrznych zaleznosci GUI - wymagane
@@ -14,21 +14,60 @@ Caly ekran:
   - przycisk "Wybierz folder gry..." (filedialog, uzywany gdy automatyczne
     wyszukiwanie w core.game_finder nie znajdzie gry)
   - checkbox "Uruchamiaj razem z Windows" (DOMYSLNIE WYLACZONY, v0.2.2)
+  - checkbox "Wysyłaj tylko gdy gra działa" (DOMYSLNIE WLACZONY, v0.2.6)
   - przycisk "Utworz skrot na pulpicie" (v0.2.2)
-  - pole statusu (ta sama trosc co linie [status] z CLI v0.1.3, patrz
-    core.ets2_core.status_line / mem_error_status_line) - ten sam tekst
-    jest tooltipem ikony zasobnika, gdy zasobnik dziala (v0.2.2)
+  - pole statusu (diagnostyka szczegolowa - [status] gra dziala/pamiec
+    SCS itd., core.ets2_core.status_line/mem_error_status_line)
   - przycisk "Zatrzymaj"
+
+NOWOSCI v0.2.6 (kontrakt v5, docs/telemetry-contract-v5.md - zlecenie
+koordynatora z 2026-11-10, naprawa bledu zgloszonego przez wlasciciela):
+  BLAD NAPRAWIONY: w v0.2.3-0.2.5 "Wstrzymaj wysyłkę" z menu zasobnika
+  NIE gwarantowalo zera pakietow - szczegolowa przyczyna (nazwa funkcji,
+  linia) w core/telemetry_worker.py (docstring modulu) i w raporcie
+  workspace/client-exe-v0.2.6.md. Skrot: stary TelemetryWorker.stop()
+  tylko ustawial `threading.Event`, sprawdzany jedynie na poczatku
+  petli `while` - w trakcie drenazu bufora/backoff_sleep() watek
+  dokanczal wysylke mimo klikniecia pauzy, a kazde "Wznow" tworzylo
+  NOWY watek bez czekania na koniec poprzedniego (mozliwe "zombie"
+  watki wysylajace w tle).
+
+  NAPRAWA: cala logika gatingu (manual pause / auto pause / baseline)
+  wydzielona do core/telemetry_worker.py (TelemetryWorker, NOWY MODUL,
+  testowalny bez tkinter - patrz tests/test_telemetry_worker.py). Jeden
+  dlugozyjacy watek na cale zycie aplikacji; pauza/wznowienie TYLKO
+  przelacza flagi sprawdzane na samym poczatku kazdego ticku - PRZED
+  jakimkolwiek odczytem pamieci/wyslaniem. Bufor jest czyszczony przy
+  KAZDYM wejsciu w stan wstrzymany.
+
+  NOWA OPCJA "Wysyłaj tylko gdy gra działa" (domyslnie WLACZONA, zapisywana
+  w config.json jako game_gate_enabled - core/config_store.py): gdy proces
+  eurotrucks2.exe nie dziala, klient wchodzi w stan "automatycznie
+  wstrzymana" (zero odczytu/sieci, tylko sprawdzanie procesu co ok. 3s) i
+  wznawia sam, gdy proces wroci - CHYBA ZE gracz wstrzymal recznie (reczne
+  wstrzymanie ma pierwszenstwo, patrz TelemetryWorker.pause()/tick()).
+
+  POLE baseline (kontrakt v5 S3): pierwszy pakiet po KAZDYM wznowieniu
+  (recznym i automatycznym) ma "baseline": true (core/ets2_core.py
+  build_packet(), sterowane przez TelemetryWorker._pending_baseline).
+  Pakiet "v": 5 (bylo 4).
+
+  TOOLTIP ikony zasobnika: teraz DOKLADNIE jeden z 3 tekstow z kontraktu
+  ("wysyłka aktywna" / "wstrzymana przez gracza" / "czeka na uruchomienie
+  gry" - core/telemetry_worker.py status_text()), ODDZIELNIE od pola
+  statusu w oknie (ktore nadal pokazuje szczegolowa diagnostyke -
+  status_line()/mem_error_status_line()). Patrz _update_tray_tooltip().
 
 NOWOSCI v0.2.2 (zlecenie koordynatora - ikona zasobnika, autostart,
 skrot na pulpicie, pojedyncza instancja):
   - Zasobnik systemowy (pystray + Pillow, core/tray_icon.py): klik ->
     pokaz okno; menu "Pokaz okno" / "Wstrzymaj wysylke lub Wznow" /
-    "Zakoncz". Import pystray jest w szerokim try/except (NIE tylko
-    ImportError) - na Linuksie bez serwera X pystray rzuca
-    Xlib.error.DisplayNameError przy samym imporcie (zweryfikowane w tej
-    sesji, patrz tests/test_tray_icon.py i raport) - program dziala dalej
-    jako zwykle okno, gdy zasobnik sie nie uruchomi.
+    "Wysyłaj tylko gdy gra działa" (v0.2.6) / "Zakoncz". Import pystray
+    jest w szerokim try/except (NIE tylko ImportError) - na Linuksie bez
+    serwera X pystray rzuca Xlib.error.DisplayNameError przy samym
+    imporcie (zweryfikowane w sesji v0.2.2, patrz tests/test_tray_icon.py
+    i raport) - program dziala dalej jako zwykle okno, gdy zasobnik sie
+    nie uruchomi.
   - Zamkniecie okna (X) chowa do zasobnika (NIE koczy programu), jesli
     zasobnik dziala; gdy zasobnik niedostepny - X zamyka program jak w
     v0.2.1 (logika w core/window_controller.py, testowalna na atrapie
@@ -44,13 +83,11 @@ skrot na pulpicie, pojedyncza instancja):
     pierwszej i sie zamyka, patrz main().
   - Start z flaga --tray: okno startuje zminimalizowane do zasobnika;
     wysylka NIE startuje automatycznie (decyzja wlasciciela 2026-11-09,
-    wariant B - v0.2.3). Nawet gdy jest zapisany token i znaleziona gra,
-    tryb --tray TYLKO chowa okno do zasobnika. Status/tooltip po starcie
-    z --tray: "czeka na start wysyłki" (TRAY_WAITING_STATUS). Wysylka
-    startuje dopiero, gdy wlasciciel kliknie "Zapisz i uruchom" w oknie
-    albo wybierze "Wznów wysyłkę" z menu zasobnika (patrz
-    _handle_tray_pause_toggle). Zwykly start bez --tray (dwuklik na .exe)
-    dziala jak dotychczas - bez zmian.
+    wariant B - v0.2.3, BEZ ZMIAN w v0.2.6, patrz kontrakt v5 SS1 pkt 4).
+    Status/tooltip po starcie z --tray: "czeka na start wysyłki"
+    (TRAY_WAITING_STATUS). Wysylka startuje dopiero, gdy wlasciciel
+    kliknie "Zapisz i uruchom" w oknie albo wybierze "Wznów wysyłkę" z
+    menu zasobnika.
 
 Zamkniecie okna (X) zatrzymuje wysylke (WM_DELETE_WINDOW -> stop_event)
 TYLKO gdy zasobnik jest niedostepny - patrz wyzej.
@@ -66,10 +103,7 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
-import time
 import tkinter as tk
-from collections import deque
 from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,40 +115,20 @@ from core import (
     plugin_installer,
     shortcut,
     single_instance,
+    telemetry_worker,
     window_controller,
 )
-from core.ets2_core import (
-    BUFFER_WINDOW_S,
-    CLIENT_NAME,
-    CLIENT_VERSION,
-    SERVER_URL,
-    SEND_INTERVAL_CONNECTED,
-    SEND_INTERVAL_DISCONNECTED,
-    ApiError,
-    CertPinMismatchError,
-    EventTracker,
-    FatalAuthError,
-    SharedMemoryReader,
-    TelemetrySender,
-    build_packet,
-    is_game_process_running,
-    mem_error_status_line,
-    safe_parse_telemetry,
-    safe_read_memory,
-    status_line,
-)
+from core.ets2_core import CLIENT_VERSION
+from core.telemetry_worker import TOKEN_REJECTED_MSG, TelemetryWorker
+
 # Import pystray + core.tray_icon (Pillow) jest w JEDNYM SZEROKIM except
-# (nie tylko ImportError) - ZNALEZISKO tej sesji (patrz raport): na
+# (nie tylko ImportError) - ZNALEZISKO sesji v0.2.2 (patrz raport): na
 # Linuksie bez serwera X pystray rzuca Xlib.error.DisplayNameError juz
-# przy samym imporcie; a w buildzie na GitHub Actions z tej sesji
-# pystray/Pillow NIE zostaly zainstalowane przed krokiem PyInstaller
-# (workflow robi tylko `pip install pyinstaller`, patrz requirements.txt
-# i raport) - PyInstaller zbudowal .exe "success", ale BEZ modulow PIL/
-# pystray w srodku (zweryfikowane przez inspekcje archiwum PyInstallera -
-# brak PIL._imaging.pyd/pystray w TOC). Gdyby ten import byl bezwarunkowy,
-# .exe rozbilby sie zaraz po starcie (ModuleNotFoundError: PIL) zamiast
-# dzialac bez zasobnika - stad SZEROKI except tutaj obejmuje OBA importy
-# (pystray i core.tray_icon), nie tylko pystray.
+# przy samym imporcie; a w buildzie na GitHub Actions z tamtej sesji
+# pystray/Pillow NIE zostaly zainstalowane przed krokiem PyInstaller.
+# Gdyby ten import byl bezwarunkowy, .exe rozbilby sie zaraz po starcie
+# (ModuleNotFoundError: PIL) zamiast dzialac bez zasobnika - stad SZEROKI
+# except tutaj obejmuje OBA importy (pystray i core.tray_icon).
 try:
     import pystray
     from core.tray_icon import build_icon_image
@@ -127,10 +141,10 @@ except Exception as _e:  # noqa: BLE001 - patrz docstring powyzej
 TRAY_AVAILABLE = pystray is not None and build_icon_image is not None
 
 WINDOW_TITLE = f"ETS2 Szosownia - klient telemetrii v{CLIENT_VERSION}"
-TOKEN_REJECTED_MSG = "Token odrzucony — wygeneruj nowy na szosownia.com/konto"
 TRAY_FLAG = "--tray"
-# v0.2.3 (wariant B): tekst statusu/tooltipa zasobnika po starcie z --tray,
-# zanim wlasciciel kliknie "Zapisz i uruchom" albo "Wznów wysyłkę".
+# v0.2.3 (wariant B, BEZ ZMIAN w v0.2.6): tekst statusu/tooltipa zasobnika
+# po starcie z --tray, zanim wlasciciel kliknie "Zapisz i uruchom" albo
+# "Wznów wysyłkę" (worker jeszcze NIE istnieje w tym momencie).
 TRAY_WAITING_STATUS = "czeka na start wysyłki"
 
 
@@ -147,107 +161,6 @@ def get_exe_path() -> str:
     return os.path.abspath(__file__)
 
 
-class TelemetryWorker:
-    """Petla wysylkowa (2 Hz) dzialajaca w osobnym wątku, zeby nie blokowac
-    tkinter mainloop. Logika identyczna z main() z client/client.py
-    (v0.1.3) - buforowanie 60s, backoff na 429, stop na 401/pin mismatch -
-    tylko print() zastapiony wywolaniem on_status(tekst) do GUI."""
-
-    def __init__(self, token: str, tls_sha256_pin: str | None, on_status):
-        self._sender = TelemetrySender(SERVER_URL, token, tls_sha256_pin)
-        self._reader = SharedMemoryReader()
-        self._tracker = EventTracker()
-        self._on_status = on_status
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self):
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._stop_event.set()
-
-    def _run(self):
-        buffer: deque = deque()
-        last_state = None
-        last_mem_error = None
-        self._on_status(f"{CLIENT_NAME} v{CLIENT_VERSION} - start (serwer: {SERVER_URL})")
-
-        while not self._stop_event.is_set():
-            raw, mem_err = safe_read_memory(self._reader)
-            parsed = None
-            events: list[dict] = []
-
-            if mem_err is None and raw is not None:
-                parsed, mem_err = safe_parse_telemetry(raw)
-                if mem_err is not None:
-                    raw = None
-
-            if mem_err is not None:
-                if mem_err != last_mem_error:
-                    last_mem_error = mem_err
-                    self._on_status(mem_error_status_line(mem_err))
-            else:
-                last_mem_error = None
-
-            connected = raw is not None and parsed is not None
-            running = is_game_process_running() or connected
-
-            if connected:
-                ev = self._tracker.check(parsed)
-                if ev:
-                    events.append(ev)
-            else:
-                # kontrakt v4, v0.2.5: rozlaczenie w trakcie zlecenia
-                # zeruje akumulator statystyk dostawy, nic nie wysyla.
-                self._tracker.on_disconnected()
-
-            state = (running, connected)
-            if state != last_state:
-                last_state = state
-                self._on_status(status_line(running, connected))
-
-            packet = build_packet(connected, running, parsed, events)
-            now = time.monotonic()
-            buffer.append((now, packet))
-            while buffer and (now - buffer[0][0]) > BUFFER_WINDOW_S:
-                buffer.popleft()
-
-            stopped = False
-            while buffer:
-                _, pkt = buffer[0]
-                try:
-                    self._sender.send(pkt)
-                    buffer.popleft()
-                except FatalAuthError:
-                    self._on_status(TOKEN_REJECTED_MSG)
-                    stopped = True
-                    break
-                except CertPinMismatchError as e:
-                    self._on_status(f"[BŁĄD] {e}")
-                    stopped = True
-                    break
-                except ApiError as e:
-                    msg = str(e)
-                    if "HTTP 400" in msg or "HTTP 413" in msg:
-                        buffer.popleft()
-                        continue
-                    if "HTTP 429" in msg:
-                        self._on_status("[info] limit 429, czekam (backoff)")
-                        self._sender.backoff_sleep()
-                        break
-                    self._on_status(f"[info] brak sieci / błąd serwera ({msg}), buforuję")
-                    break
-
-            if stopped:
-                self._stop_event.set()
-                break
-
-            interval = SEND_INTERVAL_CONNECTED if connected else SEND_INTERVAL_DISCONNECTED
-            self._stop_event.wait(interval)
-
-
 class App:
     def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
@@ -256,11 +169,6 @@ class App:
         self.worker: TelemetryWorker | None = None
         self.game_root: str | None = None
         self.tray_icon = None
-        # v0.2.3: logika "kiedy wysylka startuje" wydzielona do
-        # core.window_controller.TraySendGate (testowalna bez tkinter).
-        self.tray_gate = window_controller.TraySendGate(
-            on_start_sending=self.on_save_and_start, on_stop_sending=self.on_stop
-        )
 
         pad = {"padx": 10, "pady": 6}
 
@@ -308,14 +216,26 @@ class App:
         )
         self.shortcut_btn.pack(side="left")
 
-        ttk.Separator(frm).grid(row=5, column=0, columnspan=2, sticky="we", padx=10, pady=4)
+        # -- v0.2.6: "Wysyłaj tylko gdy gra działa" (kontrakt v5) ---------
+        gate_frame = ttk.Frame(frm)
+        gate_frame.grid(row=5, column=0, columnspan=2, sticky="we", padx=10)
+        self.game_gate_var = tk.BooleanVar(value=True)  # domyslnie WLACZONE
+        self.game_gate_chk = ttk.Checkbutton(
+            gate_frame,
+            text="Wysyłaj tylko gdy gra działa",
+            variable=self.game_gate_var,
+            command=self.on_toggle_game_gate,
+        )
+        self.game_gate_chk.pack(side="left")
 
-        ttk.Label(frm, text="Status:").grid(row=6, column=0, columnspan=2, sticky="w", padx=10)
+        ttk.Separator(frm).grid(row=6, column=0, columnspan=2, sticky="we", padx=10, pady=4)
+
+        ttk.Label(frm, text="Status:").grid(row=7, column=0, columnspan=2, sticky="w", padx=10)
         self.status_var = tk.StringVar(value="Gotowy. Wklej token i kliknij „Zapisz i uruchom”.")
         self.status_label = ttk.Label(
             frm, textvariable=self.status_var, wraplength=380, foreground="#222"
         )
-        self.status_label.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+        self.status_label.grid(row=8, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
         self.tray_controller = window_controller.TrayWindowController(
             self.root, tray_available=TRAY_AVAILABLE, on_stop_sending=self._stop_sending_for_quit
@@ -329,22 +249,15 @@ class App:
         self._auto_find_game()
 
         if start_hidden:
-            # v0.2.3 (wariant B, decyzja wlasciciela 2026-11-09): start z
-            # --tray TYLKO chowa okno do zasobnika - wysylka NIE startuje
-            # automatycznie, nawet gdy jest zapisany token i znaleziona
-            # gra. Wlasciciel musi kliknac "Zapisz i uruchom" w oknie albo
-            # wybrac "Wznów wysyłkę" z menu zasobnika (patrz tray_gate).
-            # tray_gate.start_from_tray() oznacza stan jako wstrzymany, aby
-            # menu zasobnika od razu pokazywalo "Wznów wysyłkę".
+            # v0.2.3 (wariant B, BEZ ZMIAN w v0.2.6): start z --tray TYLKO
+            # chowa okno do zasobnika - wysylka NIE startuje automatycznie,
+            # nawet gdy jest zapisany token i znaleziona gra. self.worker
+            # NIE jest tworzony w tym miejscu - dopiero pierwsze "Zapisz i
+            # uruchom"/"Wznów wysyłkę" go utworzy (patrz _resume_sending).
             self.root.withdraw()
             self.tray_controller.visible = False
-            self.tray_gate.start_from_tray()
             self.status_var.set(TRAY_WAITING_STATUS)
-            if self.tray_icon is not None:
-                try:
-                    self.tray_icon.title = TRAY_WAITING_STATUS
-                except Exception:  # noqa: BLE001
-                    pass
+            self._update_tray_tooltip(TRAY_WAITING_STATUS)
 
     # -- zasobnik (pystray) -------------------------------------------------
 
@@ -356,11 +269,17 @@ class App:
             menu = pystray.Menu(
                 pystray.MenuItem("Pokaż okno", self._on_tray_show, default=True),
                 pystray.MenuItem(self._tray_pause_label, self._on_tray_toggle_pause),
+                pystray.MenuItem(
+                    "Wysyłaj tylko gdy gra działa",
+                    self._on_tray_toggle_game_gate,
+                    checked=lambda item: self.game_gate_var.get(),
+                ),
                 pystray.MenuItem("Zakończ", self._on_tray_quit),
             )
             self.tray_icon = pystray.Icon(
                 "ets2szosownia", build_icon_image(), self.status_var.get(), menu=menu
             )
+            import threading
             self._tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
             self._tray_thread.start()
         except Exception:  # noqa: BLE001
@@ -368,32 +287,66 @@ class App:
             self.tray_controller.tray_available = False
 
     def _tray_pause_label(self, item) -> str:
-        return "Wznów wysyłkę" if self.tray_gate.sending_paused else "Wstrzymaj wysyłkę"
+        # Kontrakt v5 SS1: "Wznów wysyłkę" gdy wstrzymana RECZNIE LUB
+        # AUTOMATYCZNIE (albo jeszcze w ogole nie wystartowana - worker
+        # is None, np. tuz po starcie z --tray).
+        if self.worker is None or self.worker.sending_paused:
+            return "Wznów wysyłkę"
+        return "Wstrzymaj wysyłkę"
 
     def _on_tray_show(self, icon, item):
         self.root.after(0, self.tray_controller.show)
 
     def _on_tray_toggle_pause(self, icon, item):
-        self.root.after(0, self.tray_gate.toggle_from_tray_menu)
+        self.root.after(0, self._toggle_pause_from_tray)
+
+    def _toggle_pause_from_tray(self):
+        if self.worker is None:
+            # Jeszcze nigdy nie wystartowano (np. --tray) - "Wznów wysyłkę"
+            # z menu robi pelny start (token/gra musza byc juz skonfigurowane
+            # z poprzedniego zapisu config.json).
+            self.on_save_and_start()
+            return
+        if self.worker.sending_paused:
+            self._resume_sending()
+        else:
+            self._pause_sending()
+
+    def _on_tray_toggle_game_gate(self, icon, item):
+        self.root.after(0, self._toggle_game_gate_from_tray)
+
+    def _toggle_game_gate_from_tray(self):
+        self.game_gate_var.set(not self.game_gate_var.get())
+        self.on_toggle_game_gate()
 
     def _on_tray_quit(self, icon, item):
         icon.stop()
         self.root.after(0, self.tray_controller.quit)
 
     def _stop_sending_for_quit(self):
+        """Prawdziwe zatrzymanie watku (koniec programu) - jedyne miejsce,
+        ktore wola TelemetryWorker.stop() (w odroznieniu od pause())."""
         if self.worker:
             self.worker.stop()
 
     # -- pomocnicze -------------------------------------------------------
 
     def set_status(self, text: str):
-        """Wolane z wątku roboczego - Tkinter nie jest thread-safe, wiec
-        marshalling przez root.after(0, ...). Ten sam tekst trafia do
-        tooltipa ikony zasobnika (v0.2.2), jesli zasobnik dziala."""
-        self.root.after(0, lambda: self._apply_status(text))
+        """Wolane z wątku roboczego (diagnostyka szczegolowa - stan gry/
+        pamieci SCS) - Tkinter nie jest thread-safe, wiec marshalling przez
+        root.after(0, ...). TYLKO pole statusu w oknie - tooltip ikony
+        zasobnika jest sterowany ODDZIELNIE przez _update_tray_tooltip()
+        (kontrakt v5 SS1: tooltip ma pokazywac dokladnie jeden z 3 ustalonych
+        tekstow, nie diagnostyke)."""
+        self.root.after(0, lambda: self.status_var.set(text))
 
-    def _apply_status(self, text: str):
-        self.status_var.set(text)
+    def _on_worker_tooltip(self, text: str):
+        """Wolane z wątku roboczego przy KAZDEJ zmianie stanu gatingu
+        (pauza/wznowienie/auto-pauza) - ustawia tooltip ikony zasobnika na
+        jeden z 3 tekstow kontraktu v5 SS1."""
+        self.root.after(0, lambda: self._update_tray_tooltip(text))
+
+    def _update_tray_tooltip(self, text: str):
         if self.tray_icon is not None:
             try:
                 self.tray_icon.title = text[:127]  # limit tooltipa Windows
@@ -404,6 +357,7 @@ class App:
         cfg = config_store.load_config()
         if cfg:
             self.token_var.set(cfg["token"])
+            self.game_gate_var.set(cfg.get("game_gate_enabled", True))
             self.status_var.set("Wczytano zapisany token z poprzedniej konfiguracji.")
 
     def _auto_find_game(self):
@@ -435,6 +389,12 @@ class App:
         self.game_root_var.set(f"Gra znaleziona: {root}")
 
     def on_save_and_start(self):
+        """'Zapisz i uruchom' - instaluje plugin, zapisuje config.json i
+        (re)startuje wysylke. v0.2.6: jesli worker juz istnieje (np. byl
+        wczesniej wstrzymany przyciskiem 'Zatrzymaj'), NIE tworzy nowego
+        watku - tylko podmienia token (update_token) i wznawia (resume()),
+        zeby uniknac bledu z v0.2.3-0.2.5 (wielokrotne watki, patrz
+        docstring modulu i core/telemetry_worker.py)."""
         token = self.token_var.get().strip()
         if not token:
             messagebox.showerror("Brak tokena", "Wklej token z panelu konta na szosownia.com.")
@@ -455,7 +415,7 @@ class App:
         self.status_var.set(plugin_installed_message(path))
 
         try:
-            config_store.save_config(token)
+            config_store.save_config(token, game_gate_enabled=self.game_gate_var.get())
         except (OSError, ValueError) as e:
             messagebox.showerror("Błąd zapisu konfiguracji", str(e))
             return
@@ -464,20 +424,43 @@ class App:
         self.choose_btn.config(state="disabled")
         self.token_entry.config(state="disabled")
         self.stop_btn.config(state="normal")
-        self.tray_gate.mark_started()
 
-        self.worker = TelemetryWorker(token, None, self.set_status)
-        self.worker.start()
+        if self.worker is None:
+            self.worker = TelemetryWorker(
+                token,
+                None,
+                self.set_status,
+                on_tooltip=self._on_worker_tooltip,
+                game_gate_enabled_fn=self.game_gate_var.get,
+            )
+            self.worker.start()
+        else:
+            self.worker.update_token(token, None)
+        self.worker.resume()
 
     def on_stop(self):
-        if self.worker:
-            self.worker.stop()
+        """'Zatrzymaj' (przycisk w oknie) - rowniez SOFT pauza (jak tray
+        'Wstrzymaj wysyłkę', patrz _pause_sending) - watek NIE jest zabijany,
+        tylko wstrzymany (zero odczytu/sieci), zeby ponowne 'Zapisz i
+        uruchom' moglo bezpiecznie wznowic bez tworzenia drugiego watku."""
+        self._pause_sending()
         self.save_btn.config(state="normal")
         self.choose_btn.config(state="normal")
         self.token_entry.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.status_var.set("Zatrzymano przez użytkownika.")
-        self.tray_gate.mark_stopped()
+
+    def _pause_sending(self):
+        if self.worker:
+            self.worker.pause()
+
+    def _resume_sending(self):
+        if self.worker:
+            self.worker.resume()
+            self.save_btn.config(state="disabled")
+            self.choose_btn.config(state="disabled")
+            self.token_entry.config(state="disabled")
+            self.stop_btn.config(state="normal")
 
     def on_toggle_autostart(self):
         """Checkbox 'Uruchamiaj razem z Windows' - zapisuje/usuwa wpis w
@@ -495,6 +478,24 @@ class App:
                 "Błąd autostartu", f"Nie udało się zmienić wpisu autostartu: {e}"
             )
             self.autostart_var.set(not enabled)
+
+    def on_toggle_game_gate(self):
+        """Checkbox/menu 'Wysyłaj tylko gdy gra działa' (v0.2.6, kontrakt
+        v5). Dziala natychmiast (worker czyta flage na biezaco przez
+        game_gate_enabled_fn=self.game_gate_var.get) - nie wymaga
+        ponownego 'Zapisz i uruchom'. Jesli token byl juz kiedys zapisany,
+        persystuje wybor do config.json od razu."""
+        enabled = self.game_gate_var.get()
+        cfg = config_store.load_config()
+        if cfg:
+            try:
+                config_store.save_config(
+                    cfg["token"],
+                    tls_sha256_pin=cfg.get("tls_sha256_pin"),
+                    game_gate_enabled=enabled,
+                )
+            except (OSError, ValueError):
+                pass
 
     def on_create_shortcut(self):
         """Przycisk 'Utwórz skrót na pulpicie' (core/shortcut.py,

@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-# ETS2 Szosownia - PyInstaller spec, v0.2.5
+# ETS2 Szosownia - PyInstaller spec, v0.2.6
 # ==========================================
 # Budowany na runs-on: windows-latest (patrz .github/workflows/build.yml,
 # PUSH automatyczny z konta Piotr-Pie - patrz raport o zakresie tokena).
 #
 # --onefile --windowed (bez konsoli), DLL pluginu wbudowany jako dane
 # (--add-data), nazwa wynikowa:
-#   ETS2-Szosownia-Telemetria-v0.2.5.exe
+#   ETS2-Szosownia-Telemetria-v0.2.6.exe
 #
 # v0.2.2: zasobnik systemowy (pystray + Pillow) - workflow instaluje
 # pystray+Pillow PRZED `pyinstaller build.spec` (zweryfikowane w sesji
@@ -24,6 +24,11 @@
 # v4) - logika w core/ets2_core.py + nowy modul core/job_stats.py
 # (dodany do hiddenimports nizej, zebyPyInstaller go nie zgubil), BEZ
 # ZMIAN w pozostalej czesci build.spec poza nazwa wynikowego .exe.
+#
+# v0.2.6: pelny gating wysylki (manual pause / auto pause / baseline,
+# kontrakt v5) - logika w NOWYM module core/telemetry_worker.py
+# (dodany do hiddenimports nizej), BEZ ZMIAN w pozostalej czesci
+# build.spec poza nazwa wynikowego .exe.
 #
 # Budowa lokalna (Windows, do testow deweloperskich):
 #   pip install pyinstaller -r requirements.txt
@@ -47,6 +52,7 @@ a = Analysis(
         'core',
         'core.ets2_core',
         'core.job_stats',
+        'core.telemetry_worker',
         'core.game_finder',
         'core.config_store',
         'core.plugin_installer',
@@ -82,7 +88,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='ETS2-Szosownia-Telemetria-v0.2.5',
+    name='ETS2-Szosownia-Telemetria-v0.2.6',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
