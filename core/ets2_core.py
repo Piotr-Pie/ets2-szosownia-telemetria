@@ -48,6 +48,23 @@ scssdk_telemetry_truck_common_channels.h: "truck's navigation distance
 (in meters)"), NIE w km jak pierwotnie zalozono w kontrakcie - klient
 dzieli przez 1000 przy budowie job.remaining_distance_km. routeTime jest
 w SEKUNDACH ("in second") - klient dzieli przez 60 na minuty.
+
+STATYSTYKI DOSTAWY (fuel_avg_consumption, job_stats) - dodane 2026-11-10,
+v0.2.5, kontrakt v4 (docs/telemetry-contract-v4.md). Pakiet "v": 4.
+truck_f.fuelAvgConsumption JUZ byl zmapowany w _TruckF (linia tuz po
+"fuel", patrz pole nizej) - offset POTWIERDZONY w tej sesji przez
+pobranie naglowka scs-telemetry-common.hpp z commitu HEADER_COMMIT
+(ponizej): linia 327, "float fuelAvgConsumption;" bezposrednio po "float
+fuel;" (linia 326), identyczna kolejnosc jak w _TruckF - bez przesuniecia
+wzgledem produkcyjnego kodu dzialajacego od v0.1.x. Jednostka SDK (plik
+scssdk_telemetry_truck_common_channels.h, SCS_TELEMETRY_TRUCK_CHANNEL_
+fuel_average_consumption): "Average consumption of the fuel in
+liters/km" -> kontrakt v4 wymaga l/100km, stad *100 w
+_sanitize_fuel_avg_consumption_pct(). Statystyki calego zlecenia
+(max_speed_kmh/moving_time_s/avg_speed_kmh/fuel_used_l/
+avg_consumption_l_per_100km w zdarzeniu job_delivered) sa liczone przez
+nowy modul core/job_stats.py (JobStatsAccumulator), sterowany z
+EventTracker.check() nizej - patrz tam i raport v0.2.5.
 """
 
 from __future__ import annotations
@@ -69,8 +86,10 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 
+from core.job_stats import JobStatsAccumulator
+
 CLIENT_NAME = "ets2-telemetry-client"
-CLIENT_VERSION = "0.2.4"
+CLIENT_VERSION = "0.2.5"
 
 # commit uzyty do wyliczenia poniższych offsetow (dla audytu / aktualizacji)
 HEADER_COMMIT = "c8910d6e9a5ca0c2fa018942054263292cab19a4"
@@ -457,6 +476,9 @@ def parse_telemetry(raw: bytes) -> dict:
         "engine_rpm": float(m.truck_f.engineRpm),
         "fuel_l": float(m.truck_f.fuel),
         "fuel_capacity_l": float(m.config_f.fuelCapacity),
+        # fuelAvgConsumption, kontrakt v4, v0.2.5 - SDK: l/km (patrz
+        # docstring modulu, offset potwierdzony w sesji v0.2.5).
+        "fuel_avg_consumption_l_per_km_raw": float(m.truck_f.fuelAvgConsumption),
         "odometer_km": float(m.truck_f.truckOdometer),
         "job_delivered_flag": bool(m.special_b.jobDelivered),
         "job_delivered_distance_km": float(m.gameplay_f.jobDeliveredDistanceKm),
@@ -597,6 +619,22 @@ def build_job(parsed: dict) -> dict:
         job["remaining_time_min"] = round(remaining_time_min, 1)
 
     return job
+
+
+# ---------------------------------------------------------------------------
+# 2d) Spalanie srednie (fuel_avg_consumption, kontrakt v4, v0.2.5) -
+#     SDK fuelAvgConsumption jest w l/km (patrz docstring modulu), klient
+#     przelicza na l/100km. Pole ZAWSZE obecne w truck (typ float|null) -
+#     null gdy NaN/inf, <=0 lub >100 (kontrakt v4 S1).
+# ---------------------------------------------------------------------------
+
+def _sanitize_fuel_avg_consumption_pct(l_per_km: float) -> float | None:
+    """SDK fuelAvgConsumption (l/km) * 100 -> l/100km. None (pole null w
+    JSON, NIE pominiete) gdy NaN/inf, <=0 lub >100 - kontrakt v4 S1."""
+    pct = l_per_km * 100.0
+    if not math.isfinite(pct) or pct <= 0 or pct > 100:
+        return None
+    return round(pct, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -753,18 +791,40 @@ def make_event_id(delivery_time: int, distance_km: float, earned_xp: int) -> str
 
 class EventTracker:
     """Wykrywa krawedz (zmiane) flagi special_b.jobDelivered i generuje
-    zdarzenie job_delivered. (BEZ ZMIAN wzgledem v0.1.3)"""
+    zdarzenie job_delivered. Krawedz sama w sobie jest BEZ ZMIAN wzgledem
+    v0.1.3. v0.2.5 (kontrakt v4): dodatkowo steruje JobStatsAccumulator
+    (core/job_stats.py) i dopisuje do zdarzenia 5 pol statystyk dostawy -
+    patrz docstring modulu job_stats i raport v0.2.5."""
 
     def __init__(self):
         self._last_flag: bool | None = None
         self._sent_ids: set[str] = set()
+        self._job_stats = JobStatsAccumulator()
+
+    def on_disconnected(self) -> None:
+        """Wolac z petli wysylkowej, gdy connected=False w tym ticku -
+        rozlaczenie w trakcie zlecenia zeruje akumulator, nic nie wysyla
+        (kontrakt v4 S2)."""
+        self._job_stats.abort()
 
     def check(self, parsed: dict) -> dict | None:
+        """Wolac TYLKO gdy connected=True (parsed pochodzi z odczytanej
+        pamieci SCS w tym ticku)."""
+        on_job = bool(parsed.get("on_job", False))
+        self._job_stats.start_if_needed(on_job)
+        if self._job_stats.active:
+            speed_kmh = parsed["speed_mps"] * 3.6
+            self._job_stats.sample(speed_kmh, parsed["fuel_l"])
+
         flag = parsed["job_delivered_flag"]
         if self._last_flag is None:
             self._last_flag = flag
+            if not on_job:
+                self._job_stats.abort()
             return None
         if flag == self._last_flag:
+            if not on_job:
+                self._job_stats.abort()
             return None
         self._last_flag = flag
         event_id = make_event_id(
@@ -773,6 +833,8 @@ class EventTracker:
             parsed["job_delivered_earned_xp"],
         )
         if event_id in self._sent_ids:
+            if not on_job:
+                self._job_stats.abort()
             return None
         self._sent_ids.add(event_id)
 
@@ -782,19 +844,24 @@ class EventTracker:
         else:
             revenue = revenue_raw
 
-        return {
+        distance_km = round(parsed["job_delivered_distance_km"], 1)
+        event = {
             "type": "job_delivered",
             "event_id": event_id,
-            "distance_km": round(parsed["job_delivered_distance_km"], 1),
+            "distance_km": distance_km,
             "earned_xp": parsed["job_delivered_earned_xp"],
             "revenue": revenue,
         }
+        # kontrakt v4 (S2): 5 pol statystyk dostawy z akumulatora -
+        # finish_delivery() resetuje akumulator, gotowy na kolejne zlecenie.
+        event.update(self._job_stats.finish_delivery(distance_km))
+        return event
 
 
 def build_packet(connected: bool, running: bool, parsed: dict | None,
                   events: list[dict]) -> dict:
     packet = {
-        "v": 3,
+        "v": 4,
         "client": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
         "sent_at": iso_now(),
         "game": {
@@ -810,6 +877,10 @@ def build_packet(connected: bool, running: bool, parsed: dict | None,
             "gear": parsed["gear"],
             "fuel_l": round(parsed["fuel_l"], 1),
             "fuel_capacity_l": round(parsed["fuel_capacity_l"], 1),
+            # kontrakt v4 (S1), v0.2.5 - pole ZAWSZE obecne, typ float|null.
+            "fuel_avg_consumption_l_per_100km": _sanitize_fuel_avg_consumption_pct(
+                parsed["fuel_avg_consumption_l_per_km_raw"]
+            ),
             "odometer_km": round(parsed["odometer_km"], 1),
         }
         position = build_position(parsed)

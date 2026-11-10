@@ -198,6 +198,10 @@ class TelemetryWorker:
                 ev = self._tracker.check(parsed)
                 if ev:
                     events.append(ev)
+            else:
+                # kontrakt v4, v0.2.5: rozlaczenie w trakcie zlecenia
+                # zeruje akumulator statystyk dostawy, nic nie wysyla.
+                self._tracker.on_disconnected()
 
             state = (running, connected)
             if state != last_state:
